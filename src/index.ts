@@ -9,7 +9,7 @@ import { trueblocks } from "./trueblocks-client";
 
 const MAX_BLOCK_RANGE = 100_000n;
 
-const TOML_PATH = process.env.TRUEBLOCKS_CONFIG ?? "./trueBlocks.toml";
+const TOML_PATH = process.env.TRUEBLOCKS_CONFIG ?? "./chifra/trueBlocks.toml";
 
 const toml = await Bun.file(TOML_PATH).text();
 const config = Bun.TOML.parse(toml) as {
