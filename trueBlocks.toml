@@ -28,3 +28,138 @@
     remoteExplorer = "https://arbiscan.io"
     safetyDistance = 1000
     blockTimeMs = 250
+
+  [chains.polygon]
+    chain = "polygon"
+    chainId = "137"
+    symbol = "POL"
+    rpcProviders = ["https://137.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://polygonscan.com"
+    safetyDistance = 200
+    blockTimeMs = 2000
+
+  [chains.optimism]
+    chain = "optimism"
+    chainId = "10"
+    symbol = "ETH"
+    rpcProviders = ["https://10.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://optimistic.etherscan.io"
+    safetyDistance = 10
+    blockTimeMs = 2000
+
+  [chains.base]
+    chain = "base"
+    chainId = "8453"
+    symbol = "ETH"
+    rpcProviders = ["https://8453.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://basescan.org"
+    safetyDistance = 10
+    blockTimeMs = 2000
+
+  [chains.base-sepolia]
+    chain = "base-sepolia"
+    chainId = "84532"
+    symbol = "ETH"
+    rpcProviders = ["https://84532.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://sepolia.basescan.org"
+    safetyDistance = 10
+    blockTimeMs = 2000
+
+  [chains.bnb]
+    chain = "bnb"
+    chainId = "56"
+    symbol = "BNB"
+    rpcProviders = ["https://56.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://bscscan.com"
+    safetyDistance = 10
+    blockTimeMs = 750
+
+  [chains.avalanche]
+    chain = "avalanche"
+    chainId = "43114"
+    symbol = "AVAX"
+    rpcProviders = ["https://43114.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://snowtrace.io"
+    safetyDistance = 10
+    blockTimeMs = 1700
+
+  [chains.gnosis]
+    chain = "gnosis"
+    chainId = "100"
+    symbol = "XDAI"
+    rpcProviders = ["https://100.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://gnosisscan.io"
+    safetyDistance = 10
+    blockTimeMs = 5000
+
+  [chains.scroll]
+    chain = "scroll"
+    chainId = "534352"
+    symbol = "ETH"
+    rpcProviders = ["https://534352.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://scrollscan.com"
+    safetyDistance = 5
+    blockTimeMs = 3000
+
+  [chains.linea]
+    chain = "linea"
+    chainId = "59144"
+    symbol = "ETH"
+    rpcProviders = ["https://59144.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://lineascan.build"
+    safetyDistance = 5
+    blockTimeMs = 2000
+
+  [chains.sonic]
+    chain = "sonic"
+    chainId = "146"
+    symbol = "S"
+    rpcProviders = ["https://146.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://sonicscan.org"
+    safetyDistance = 10
+    blockTimeMs = 630
+
+  [chains.celo]
+    chain = "celo"
+    chainId = "42220"
+    symbol = "CELO"
+    rpcProviders = ["https://42220.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://celoscan.io"
+    safetyDistance = 10
+    blockTimeMs = 1000
+
+  [chains.plasma]
+    chain = "plasma"
+    chainId = "9745"
+    symbol = "ETH"
+    rpcProviders = ["https://9745.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = ""
+    safetyDistance = 10
+    blockTimeMs = 1000
+
+  [chains.ink]
+    chain = "ink"
+    chainId = "57073"
+    symbol = "ETH"
+    rpcProviders = ["https://57073.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://explorer.inkonchain.com"
+    safetyDistance = 10
+    blockTimeMs = 2000
+
+  [chains.mantle]
+    chain = "mantle"
+    chainId = "5000"
+    symbol = "MNT"
+    rpcProviders = ["https://5000.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://mantlescan.xyz"
+    safetyDistance = 10
+    blockTimeMs = 1000
+
+  [chains.megaeth]
+    chain = "megaeth"
+    chainId = "4326"
+    symbol = "ETH"
+    rpcProviders = ["https://4326.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = ""
+    safetyDistance = 10
+    blockTimeMs = 1000
