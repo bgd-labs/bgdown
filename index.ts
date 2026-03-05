@@ -17,6 +17,8 @@ const CHAIN_NAMES: Record<string, string> = Object.fromEntries(
   Object.values(config.chains).map(({ chainId, chain }) => [chainId, chain]),
 );
 
+const ChainId = t.Union(Object.keys(CHAIN_NAMES).map((id) => t.Literal(id)));
+
 const Log = t.Object({
   address: t.String(),
   blockHash: t.String(),
@@ -55,34 +57,36 @@ new Elysia()
     }),
   )
   .use(auth)
-  .get("/stats", async () => {
-    const volumes = ["/cache", "/unchained"] as const;
-    const result: Record<string, Record<string, number>> = {};
+  .get(
+    "/:chainId/stats",
+    async ({ params }) => {
+      const chain = CHAIN_NAMES[params.chainId] ?? "";
+      const volumes = ["/cache", "/unchained"] as const;
+      const result: Record<string, number> = {};
 
-    for (const volume of volumes) {
-      const dirs: Record<string, number> = {};
-      const glob = new Bun.Glob("*");
-      for await (const name of glob.scan({ cwd: volume, onlyFiles: false })) {
-        const dirPath = `${volume}/${name}`;
+      for (const volume of volumes) {
         let size = 0;
-        const inner = new Bun.Glob("**");
-        for await (const file of inner.scan({ cwd: dirPath })) {
-          size += (await Bun.file(`${dirPath}/${file}`).stat()).size;
+        const glob = new Bun.Glob("**");
+        for await (const file of glob.scan({ cwd: `${volume}/${chain}` })) {
+          size += (await Bun.file(`${volume}/${chain}/${file}`).stat()).size;
         }
-        dirs[name] = size;
+        result[volume] = size;
       }
-      result[volume] = dirs;
-    }
 
-    return result;
-  })
+      return result;
+    },
+    {
+      params: t.Object({ chainId: ChainId }),
+      response: {
+        200: t.Record(t.String(), t.Number()),
+        401: t.String(),
+      },
+    },
+  )
   .get(
     "/:chainId/logs",
     async ({ params, query, status, set }) => {
-      const chain = CHAIN_NAMES[params.chainId];
-      if (!chain) {
-        return status(400, `Unsupported chainId: ${params.chainId}`);
-      }
+      const chain = CHAIN_NAMES[params.chainId] ?? "";
 
       let from = BigInt(query.from);
       let to = BigInt(query.to);
@@ -120,7 +124,7 @@ new Elysia()
       ) as unknown as Array<typeof Log.static>;
     },
     {
-      params: t.Object({ chainId: t.String() }),
+      params: t.Object({ chainId: ChainId }),
       query: t.Object({
         from: t.Numeric(),
         to: t.Numeric(),
