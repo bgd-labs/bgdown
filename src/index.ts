@@ -174,12 +174,6 @@ new Elysia()
     openapi({
       documentation: {
         info: { title: "TrueBlocks API", version: "1.0.0" },
-        components: {
-          securitySchemes: {
-            apiKey: { type: "apiKey", in: "query", name: "token" },
-          },
-        },
-        security: [{ apiKey: [] }],
       },
     }),
   )
