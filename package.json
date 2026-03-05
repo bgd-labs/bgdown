@@ -17,7 +17,6 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@elysiajs/bearer": "^1.4.3",
     "@elysiajs/cron": "^1.4.1",
     "@elysiajs/openapi": "^1.4.14",
     "elysia": "^1.4.27",

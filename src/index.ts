@@ -165,10 +165,10 @@ new Elysia()
         info: { title: "TrueBlocks API", version: "1.0.0" },
         components: {
           securitySchemes: {
-            bearerAuth: { type: "http", scheme: "bearer" },
+            apiKey: { type: "apiKey", in: "query", name: "token" },
           },
         },
-        security: [{ bearerAuth: [] }],
+        security: [{ apiKey: [] }],
       },
     }),
   )
@@ -176,10 +176,7 @@ new Elysia()
     rateLimit({
       max: 60,
       duration: 60_000,
-      generator: (req) =>
-        req.headers.get("authorization")?.slice(7) ??
-        req.headers.get("authorization") ??
-        "",
+      generator: (req) => new URL(req.url).searchParams.get("token") ?? "",
     }),
   )
   .use(auth)
