@@ -1,4 +1,4 @@
-import pThrottle from "p-throttle";
+import PQueue from "p-queue";
 
 const BASE_URL = process.env.API_URL ?? "https://logs.bgdlabs.com";
 const TOKEN = process.env.API_TOKEN ?? "";
@@ -11,10 +11,10 @@ if (!chainId) {
   process.exit(1);
 }
 
-const throttle = pThrottle({ limit: 1, interval: 100 });
+const queue = new PQueue({ concurrency: 1 });
 
-const fetchRange = throttle(async (from: number, to: number) => {
-  const url = `${BASE_URL}/${chainId}/logs?from=${from}&to=${to}&token=${TOKEN}&emitter=0x0000000000000000000000000000000000000000`;
+async function fetchRange(from: number, to: number): Promise<void> {
+  const url = `${BASE_URL}/${chainId}/logs?from=${from}&to=${to}&token=${TOKEN}`;
   while (true) {
     const res = await fetch(url);
     if (res.status === 429 || res.status === 502) {
@@ -24,17 +24,18 @@ const fetchRange = throttle(async (from: number, to: number) => {
     }
     if (!res.ok) {
       console.error(`FAIL ${from}-${to} (${res.status})`);
-      return false;
+      return;
     }
     console.log(`OK   ${from}-${to}`);
-    return true;
+    return;
   }
-});
-
-const ranges: Array<[number, number]> = [];
-for (let i = 0; i < END_BLOCK; i += STEP) {
-  ranges.push([i, i + STEP]);
 }
 
-await Promise.all(ranges.map(([from, to]) => fetchRange(from, to)));
+for (let i = 0; i < END_BLOCK; i += STEP) {
+  const from = i;
+  const to = i + STEP;
+  queue.add(() => fetchRange(from, to));
+}
+
+await queue.onIdle();
 console.log("Done.");
