@@ -15,13 +15,20 @@ const throttle = pThrottle({ limit: 5, interval: 1000 });
 
 const fetchRange = throttle(async (from: number, to: number) => {
   const url = `${BASE_URL}/${chainId}/logs?from=${from}&to=${to}&token=${TOKEN}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    console.error(`FAIL ${from}-${to} (${res.status})`);
-    return false;
+  while (true) {
+    const res = await fetch(url);
+    if (res.status === 429) {
+      console.warn(`THROTTLE ${from}-${to}, retrying in 5s...`);
+      await Bun.sleep(5000);
+      continue;
+    }
+    if (!res.ok) {
+      console.error(`FAIL ${from}-${to} (${res.status})`);
+      return false;
+    }
+    console.log(`OK   ${from}-${to}`);
+    return true;
   }
-  console.log(`OK   ${from}-${to}`);
-  return true;
 });
 
 const ranges: Array<[number, number]> = [];

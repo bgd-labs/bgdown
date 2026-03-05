@@ -209,7 +209,7 @@ new Elysia()
   )
   .use(
     rateLimit({
-      max: 60,
+      max: 600,
       duration: 60_000,
       generator: (req) => new URL(req.url).searchParams.get("token") ?? "",
     }),
