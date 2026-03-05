@@ -11,7 +11,7 @@ if (!chainId) {
   process.exit(1);
 }
 
-const throttle = pThrottle({ limit: 5, interval: 1000 });
+const throttle = pThrottle({ limit: 2, interval: 1000 });
 
 const fetchRange = throttle(async (from: number, to: number) => {
   const url = `${BASE_URL}/${chainId}/logs?from=${from}&to=${to}&token=${TOKEN}`;
