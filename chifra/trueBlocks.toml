@@ -1,21 +1,44 @@
 [version]
-  current = "v5.9.3"
+  # Do not edit
+  current = 'v6.7.0'
 
 [settings]
-  defaultChain = "mainnet"
-  cachePath = "/cache"
-  indexPath = "/unchained"
+  cachePath = '/cache'
+  indexPath = '/unchained'
+  defaultChain = 'mainnet'
+
+  [settings.notify]
+    url = ''
+    author = ''
 
 [keys]
   [keys.etherscan]
-    apiKey = "RF6Z521XGTT83IWYUV6F1U93RCM419MYMX"
+    apiKey = 'RF6Z521XGTT83IWYUV6F1U93RCM419MYMX'
+
+[pinning]
+  gatewayUrl = 'https://ipfs.unchainedindex.io/ipfs/'
+  localPinUrl = 'http://localhost:5001'
+  remotePinUrl = 'https://api.pinata.cloud/pinning/pinFileToIPFS'
+
+# Do not edit these values unless instructed to do so.
+[unchained]
+  preferredPublisher = 'publisher.unchainedindex.eth'
+  smartContract = '0x0c316b7042b419d07d343f2f4f5bd54ff731183d'
 
 [chains]
   [chains.mainnet]
-    chain = "mainnet"
-    chainId = "1"
-    symbol = "ETH"
-    rpcProvider = "https://1.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"
-    remoteExplorer = "https://etherscan.io"
+    chain = 'mainnet'
+    chainId = '1'
+    remoteExplorer = 'https://etherscan.io'
+    rpcProviders = ['https://1.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab']
+    symbol = 'ETH'
     safetyDistance = 128
     blockTimeMs = 12000
+
+    [chains.mainnet.scrape]
+      appsPerChunk = 0
+      snapToGrid = 0
+      firstSnap = 0
+      unripeDist = 0
+      allowMissing = false
+      channelCount = 0

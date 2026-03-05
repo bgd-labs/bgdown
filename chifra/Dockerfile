@@ -9,7 +9,7 @@ RUN apk --no-cache add \
 
 WORKDIR /root
 
-ARG UPSTREAM_VER=v5.9.3
+ARG UPSTREAM_VER=v6.7.0
 
 RUN git clone --depth 1 --no-single-branch --recurse-submodules --branch "${UPSTREAM_VER}" \
     https://github.com/TrueBlocks/trueblocks-core.git && \
