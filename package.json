@@ -13,6 +13,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@elysiajs/cron": "^1.4.1",
     "@elysiajs/openapi": "^1.4.14",
     "elysia": "^1.4.27",
     "elysia-rate-limit": "^4.5.0"

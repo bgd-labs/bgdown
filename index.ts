@@ -1,3 +1,4 @@
+import { cron } from "@elysiajs/cron";
 import { openapi } from "@elysiajs/openapi";
 import { Elysia, t } from "elysia";
 import { rateLimit } from "elysia-rate-limit";
@@ -61,7 +62,6 @@ async function refreshHeads() {
 }
 
 await refreshHeads();
-setInterval(refreshHeads, 2 * 60 * 1000);
 
 const ChainId = t.Union(Object.keys(CHAIN_CONFIG).map((id) => t.Literal(id)));
 
@@ -90,6 +90,13 @@ const Log = t.Object({
 });
 
 new Elysia()
+  .use(
+    cron({
+      name: "refreshHeads",
+      pattern: "*/2 * * * *",
+      run: refreshHeads,
+    }),
+  )
   .use(
     openapi({
       documentation: {
