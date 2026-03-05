@@ -1,18 +1,13 @@
+import { bearer } from "@elysiajs/bearer";
 import { Elysia } from "elysia";
 import users from "../users.json";
 
 const tokens = new Set(Object.values(users));
 
-export const auth = new Elysia({ name: "auth" }).onBeforeHandle(
-  { as: "global" },
-  ({ headers, status }) => {
-    const authHeader = headers.authorization;
-    const token = authHeader?.startsWith("Bearer ")
-      ? authHeader.slice(7)
-      : undefined;
-
-    if (!token || !tokens.has(token)) {
+export const auth = new Elysia({ name: "auth" })
+  .use(bearer())
+  .onBeforeHandle({ as: "global" }, ({ bearer, status }) => {
+    if (!bearer || !tokens.has(bearer)) {
       return status(401, "Unauthorized");
     }
-  },
-);
+  });
