@@ -1,13 +1,12 @@
-import { Elysia, t } from "elysia";
 import { openapi } from "@elysiajs/openapi";
+import { Elysia, t } from "elysia";
 import { rateLimit } from "elysia-rate-limit";
 import { auth } from "./auth";
 
 const TRUEBLOCKS_URL = process.env.TRUEBLOCKS_URL ?? "http://trueblocks:8080";
 const MAX_BLOCK_RANGE = 100_000n;
 
-const TOML_PATH =
-  process.env.TRUEBLOCKS_CONFIG ?? "./trueBlocks.toml";
+const TOML_PATH = process.env.TRUEBLOCKS_CONFIG ?? "./trueBlocks.toml";
 
 const toml = await Bun.file(TOML_PATH).text();
 const config = Bun.TOML.parse(toml) as {
@@ -15,7 +14,7 @@ const config = Bun.TOML.parse(toml) as {
 };
 
 const CHAIN_NAMES: Record<string, string> = Object.fromEntries(
-  Object.values(config.chains).map(({ chainId, chain }) => [chainId, chain])
+  Object.values(config.chains).map(({ chainId, chain }) => [chainId, chain]),
 );
 
 const Log = t.Object({
@@ -42,7 +41,7 @@ new Elysia()
         },
         security: [{ bearerAuth: [] }],
       },
-    })
+    }),
   )
   .get("/", ({ redirect }) => redirect("/openapi"))
   .use(
@@ -50,8 +49,10 @@ new Elysia()
       max: 60,
       duration: 60_000,
       generator: (req) =>
-        req.headers.get("authorization")?.slice(7) ?? req.headers.get("authorization") ?? "",
-    })
+        req.headers.get("authorization")?.slice(7) ??
+        req.headers.get("authorization") ??
+        "",
+    }),
   )
   .use(auth)
   .get(
@@ -88,8 +89,12 @@ new Elysia()
       if (!response.ok) {
         return status(502, await response.text());
       }
-      const json = await response.json() as { data: Array<{ date?: unknown } & Record<string, unknown>> };
-      return (json.data ?? []).map(({ date: _, ...log }) => log) as unknown as Array<typeof Log.static>;
+      const json = (await response.json()) as {
+        data: Array<{ date?: unknown } & Record<string, unknown>>;
+      };
+      return (json.data ?? []).map(
+        ({ date: _, ...log }) => log,
+      ) as unknown as Array<typeof Log.static>;
     },
     {
       params: t.Object({ chainId: t.String() }),
@@ -105,7 +110,7 @@ new Elysia()
         401: t.String(),
         502: t.String(),
       },
-    }
+    },
   )
   .listen(3000);
 
