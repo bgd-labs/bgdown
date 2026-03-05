@@ -1,7 +1,7 @@
 #!/bin/sh
 set +e
 
-chifra init --all
+chifra init --all --chain mainnet
 
 while true; do
     chifra daemon --verbose --url 0.0.0.0:8080
