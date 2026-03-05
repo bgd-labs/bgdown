@@ -1,7 +1,7 @@
 import openapiTS, { astToString } from "openapi-typescript";
 
 const SPEC_URL =
-  "https://raw.githubusercontent.com/TrueBlocks/trueblocks-core/develop/docs/content/api/openapi.yaml";
+  "https://raw.githubusercontent.com/TrueBlocks/trueblocks-core/v5.9.3/docs/content/api/openapi.yaml";
 
 // Fetch the upstream spec and patch a broken $ref before generation.
 // `destType` is referenced in the `destination` schema but never defined —
