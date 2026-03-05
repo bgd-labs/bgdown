@@ -9,6 +9,15 @@ services:
     expose:
       - "3000"
     restart: unless-stopped
+    volumes:
+      - type: volume
+        source: cache
+        target: /cache
+        read_only: true
+      - type: volume
+        source: unchained
+        target: /unchained
+        read_only: true
 
   trueblocks:
     build:

@@ -55,6 +55,27 @@ new Elysia()
     }),
   )
   .use(auth)
+  .get("/stats", async () => {
+    const volumes = ["/cache", "/unchained"] as const;
+    const result: Record<string, Record<string, number>> = {};
+
+    for (const volume of volumes) {
+      const dirs: Record<string, number> = {};
+      const glob = new Bun.Glob("*");
+      for await (const name of glob.scan({ cwd: volume, onlyFiles: false })) {
+        const dirPath = `${volume}/${name}`;
+        let size = 0;
+        const inner = new Bun.Glob("**");
+        for await (const file of inner.scan({ cwd: dirPath })) {
+          size += (await Bun.file(`${dirPath}/${file}`).stat()).size;
+        }
+        dirs[name] = size;
+      }
+      result[volume] = dirs;
+    }
+
+    return result;
+  })
   .get(
     "/:chainId/logs",
     async ({ params, query, status, set }) => {
