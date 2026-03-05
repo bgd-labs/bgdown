@@ -6,9 +6,6 @@
   cachePath = "/cache"
   indexPath = "/unchained"
 
-[unchained]
-  smartContract = "0x0c316b7042b419d07d343f2f4f5bd54ff731183d"
-
 [keys]
   [keys.etherscan]
     apiKey = "RF6Z521XGTT83IWYUV6F1U93RCM419MYMX"
@@ -18,7 +15,7 @@
     chain = "mainnet"
     chainId = "1"
     symbol = "ETH"
-    rpcProviders = ["https://1.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    rpcProvider = "https://1.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"
     remoteExplorer = "https://etherscan.io"
     safetyDistance = 128
     blockTimeMs = 12000
