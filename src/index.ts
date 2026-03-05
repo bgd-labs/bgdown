@@ -254,12 +254,11 @@ new Elysia()
     },
     {
       beforeHandle: ({ query, status }) => {
-        const token = (query as unknown as Record<string, string | undefined>)
-          .token;
-        if (!token || !tokenSet.has(token)) return status(401, "Unauthorized");
+        if (!tokenSet.has(query.token)) return status(401, "Unauthorized");
       },
       params: t.Object({ chainId: ChainId }),
       query: t.Object({
+        token: t.String({ description: "API token" }),
         from: t.Numeric({ description: "Start block number (inclusive)" }),
         to: t.Numeric({
           description:
