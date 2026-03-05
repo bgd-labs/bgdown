@@ -99,7 +99,8 @@ new Elysia()
   .get(
     "/:chainId/stats",
     async ({ params }) => {
-      const chain = CHAIN_CONFIG[params.chainId]?.name ?? "";
+      // biome-ignore lint/style/noNonNullAssertion: that is how we defined the type of CHAIN_CONFIG
+      const chain = CHAIN_CONFIG[params.chainId]!.name;
       const volumes = ["/cache", "/unchained"] as const;
       const result: Record<string, Record<string, string>> = {};
 
@@ -136,11 +137,8 @@ new Elysia()
   .get(
     "/:chainId/logs",
     async ({ params, query, status, set }) => {
-      const cfg = CHAIN_CONFIG[params.chainId] ?? {
-        name: "",
-        safetyDistance: 0n,
-        blockTimeMs: 0,
-      };
+      // biome-ignore lint/style/noNonNullAssertion: that is how we defined the type of CHAIN_CONFIG
+      const cfg = CHAIN_CONFIG[params.chainId]!;
 
       let from = BigInt(query.from);
       let to = BigInt(query.to);
