@@ -1,4 +1,15 @@
 services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: trueblocks-api
+    depends_on:
+      - trueblocks
+    expose:
+      - "3000"
+    restart: unless-stopped
+
   trueblocks:
     build:
       context: .

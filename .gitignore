@@ -3,3 +3,8 @@ data/
 
 # Docker
 .docker/
+
+# Node
+node_modules/
+
+
