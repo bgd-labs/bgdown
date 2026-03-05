@@ -84,6 +84,9 @@ const Log = t.Object({
 
 new Elysia()
   .use(logger())
+  .onError(({ error, request }) => {
+    console.error(`Error on ${request.method} ${request.url}:`, error);
+  })
   .use(
     cron({
       name: "refreshHeads",
