@@ -169,8 +169,9 @@ new Elysia()
             }>;
           }
         | undefined;
+      const RELEVANT_CACHES = new Set(["blocksCache", "logsCache"]);
       return (stat?.caches ?? [])
-        .filter((c) => c.path)
+        .filter((c) => c.type && RELEVANT_CACHES.has(c.type))
         .map((c) => ({
           type: c.type,
           path: c.path,
