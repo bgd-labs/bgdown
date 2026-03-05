@@ -257,6 +257,7 @@ new Elysia()
           logs = [...safeLogs, ...unsafeLogs];
         }
       } catch (err) {
+        console.error("fetchBlocks error:", err);
         return status(502, String(err));
       }
 
