@@ -27,10 +27,10 @@ RUN apk --no-cache add gzip libstdc++ libgcc libcurl python3 python3-dev procps 
 COPY --from=builder /root/trueblocks-core/bin/chifra /usr/local/bin/chifra
 
 RUN mkdir -p /root/.local/share/trueblocks
-COPY trueBlocks.toml /root/.local/share/trueblocks/trueBlocks.toml
-COPY config/ /root/.local/share/trueblocks/config/
+COPY chifra/trueBlocks.toml /root/.local/share/trueblocks/trueBlocks.toml
+COPY chifra/config/ /root/.local/share/trueblocks/config/
 
-COPY entrypoint.sh /entrypoint.sh
+COPY chifra/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8080

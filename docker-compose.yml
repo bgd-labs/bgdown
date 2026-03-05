@@ -28,7 +28,7 @@ services:
   trueblocks:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: chifra/Dockerfile
       args:
         UPSTREAM_VER: develop
     container_name: trueblocks-core
