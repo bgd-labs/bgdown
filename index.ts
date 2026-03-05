@@ -51,7 +51,6 @@ function humanSize(bytes: number): string {
   return `${value.toFixed(2)} ${UNITS[unit]}`;
 }
 
-
 const Log = t.Object({
   address: t.String(),
   blockHash: t.String(),
@@ -62,6 +61,7 @@ const Log = t.Object({
   topics: t.Array(t.String()),
   transactionHash: t.String(),
   transactionIndex: t.Number(),
+  safe: t.Boolean(),
 });
 
 new Elysia()
@@ -165,14 +165,14 @@ new Elysia()
           ? [query.topic]
           : [];
 
-      async function fetchBlocks(f: bigint, t: bigint, useCache: boolean) {
+      async function fetchBlocks(f: bigint, t: bigint, safe: boolean) {
         const { data, error } = await trueblocks.GET("/blocks", {
           params: {
             query: {
               blocks: [`${f}-${t}`],
               chain: cfg.name,
               logs: true,
-              cache: useCache,
+              cache: safe,
               emitter: emitters.length ? emitters : undefined,
               topic: topics.length ? topics : undefined,
             },
@@ -183,7 +183,7 @@ new Elysia()
           (data?.data ?? []) as Array<
             { date?: unknown } & Record<string, unknown>
           >
-        ).map(({ date: _, ...log }) => log) as unknown as Array<
+        ).map(({ date: _, ...log }) => ({ ...log, safe })) as unknown as Array<
           typeof Log.static
         >;
       }
