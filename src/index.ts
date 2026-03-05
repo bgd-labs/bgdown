@@ -104,6 +104,8 @@ new Elysia()
           name,
           safetyDistance: Number(safetyDistance),
           blockTimeMs,
+          safeHead:
+            estimatedHead(chainId, blockTimeMs) - Number(safetyDistance),
         }),
       ),
     {
@@ -118,6 +120,10 @@ new Elysia()
             }),
             blockTimeMs: t.Number({
               description: "Approximate block time in milliseconds",
+            }),
+            safeHead: t.Number({
+              description:
+                "Estimated current safe block (head minus safetyDistance)",
             }),
           }),
         ),
