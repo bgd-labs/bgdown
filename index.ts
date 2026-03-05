@@ -62,11 +62,11 @@ new Elysia()
         return status(400, `Unsupported chainId: ${params.chainId}`);
       }
 
-      const from = BigInt(query.from);
-      const to = BigInt(query.to);
+      let from = BigInt(query.from);
+      let to = BigInt(query.to);
 
       if (to < from) {
-        return status(400, "`to` must be >= `from`");
+        [from, to] = [to, from];
       }
       if (to - from > MAX_BLOCK_RANGE) {
         return status(400, `Block range must be at most ${MAX_BLOCK_RANGE}`);
