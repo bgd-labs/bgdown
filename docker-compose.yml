@@ -1,0 +1,20 @@
+services:
+  trueblocks:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UPSTREAM_VER: develop
+    container_name: trueblocks-core
+    volumes:
+      - type: volume
+        source: cache
+        target: /cache
+      - type: volume
+        source: unchained
+        target: /unchained
+    restart: unless-stopped
+
+volumes:
+  cache:
+  unchained:

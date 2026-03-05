@@ -1,0 +1,26 @@
+[version]
+  current = "v5.9.3"
+
+[settings]
+  defaultChain = "mainnet"
+  cachePath = "/cache"
+  indexPath = "/unchained"
+
+[keys]
+  [keys.etherscan]
+    apiKey = ""
+
+[chains]
+  [chains.mainnet]
+    chain = "mainnet"
+    chainId = "1"
+    symbol = "ETH"
+    rpcProviders = ["https://1.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://etherscan.io"
+
+  [chains.arbitrum]
+    chain = "arbitrum"
+    chainId = "42161"
+    symbol = "ETH"
+    rpcProviders = ["https://42161.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab"]
+    remoteExplorer = "https://arbiscan.io"
