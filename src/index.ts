@@ -123,39 +123,50 @@ new Elysia()
   )
   .get(
     "/:chainId/stats",
-    async ({ params }) => {
+    async ({ params, status }) => {
       // biome-ignore lint/style/noNonNullAssertion: that is how we defined the type of CHAIN_CONFIG
       const chain = CHAIN_CONFIG[params.chainId]!.name;
-      const volumes = ["/cache", "/unchained"] as const;
-      const result: Record<string, Record<string, string>> = {};
-
-      for (const volume of volumes) {
-        const dirs: Record<string, string> = {};
-        const topGlob = new Bun.Glob("*");
-        for await (const dir of topGlob.scan({
-          cwd: `${volume}/${chain}`,
-          onlyFiles: false,
-        })) {
-          let size = 0;
-          const inner = new Bun.Glob("**");
-          for await (const file of inner.scan({
-            cwd: `${volume}/${chain}/${dir}`,
-          })) {
-            size += (await Bun.file(`${volume}/${chain}/${dir}/${file}`).stat())
-              .size;
+      const { data, error } = await trueblocks.GET("/status", {
+        params: { query: { chain, caches: true } },
+      });
+      if (error) return status(502, JSON.stringify(error));
+      const stat = (data?.data ?? [])[0] as
+        | {
+            caches?: Array<{
+              type?: string;
+              path?: string;
+              nFiles?: number;
+              nFolders?: number;
+              sizeInBytes?: number | null;
+              lastCached?: string;
+            }>;
           }
-          dirs[dir] = humanSize(size);
-        }
-        result[volume] = dirs;
-      }
-
-      return result;
+        | undefined;
+      return (stat?.caches ?? []).map((c) => ({
+        type: c.type,
+        path: c.path,
+        nFiles: c.nFiles,
+        nFolders: c.nFolders,
+        sizeInBytes: c.sizeInBytes,
+        size: humanSize(c.sizeInBytes ?? 0),
+        lastCached: c.lastCached,
+      }));
     },
     {
       params: t.Object({ chainId: ChainId }),
       response: {
-        200: t.Record(t.String(), t.Record(t.String(), t.String())),
-        401: t.String(),
+        200: t.Array(
+          t.Object({
+            type: t.Optional(t.String()),
+            path: t.Optional(t.String()),
+            nFiles: t.Optional(t.Number()),
+            nFolders: t.Optional(t.Number()),
+            sizeInBytes: t.Optional(t.Nullable(t.Number())),
+            size: t.String(),
+            lastCached: t.Optional(t.String()),
+          }),
+        ),
+        502: t.String(),
       },
     },
   )
