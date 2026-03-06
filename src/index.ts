@@ -9,6 +9,7 @@ import {
 import pino from "pino";
 import { CHAIN_BY_ID } from "./chains";
 import env from "./env";
+import { getSafeAddresses } from "./safe-addresses";
 import { ensureSchema } from "./schema";
 
 const FLUSH_BATCH_SIZE = 75_000;
@@ -167,9 +168,18 @@ function serializeBatch(rows: LogRow[]): Buffer {
 async function getChainState(
   clickhouse: ReturnType<typeof createClient>,
   chainId: number,
+  ignoreAddresses: string[] = [],
 ): Promise<{ startBlock: number; totalLogs: number }> {
+  let query = `SELECT max(block_number) AS max_block, count() AS total_logs FROM ${env.CLICKHOUSE_DB}.logs WHERE chain_id = ${chainId}`;
+  if (ignoreAddresses.length > 0) {
+    const formattedAddresses = ignoreAddresses
+      .map((a) => `'${a.toLowerCase().replace("0x", "")}'`)
+      .join(", ");
+    query += ` AND lower(hex(address)) NOT IN (${formattedAddresses})`;
+  }
+
   const result = await clickhouse.query({
-    query: `SELECT max(block_number) AS max_block, count() AS total_logs FROM ethereum.logs WHERE chain_id = ${chainId}`,
+    query,
     format: "JSONEachRow",
   });
   const rows = await result.json<{ max_block: string; total_logs: string }>();
@@ -188,7 +198,9 @@ async function flushBatch(batch: LogRow[], log: pino.Logger): Promise<void> {
   // use the HTTP interface directly. RowBinary is ~2× faster than JSON and
   // lets us store hashes/addresses as true binary rather than hex strings.
   const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.logs FORMAT RowBinary`)}`;
-  const credentials = btoa(`${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`);
+  const credentials = btoa(
+    `${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`,
+  );
   const res = await fetch(url, {
     method: "POST",
     body: new Uint8Array(data),
@@ -208,12 +220,13 @@ async function runStream(
   toBlock: number,
   initialTotalLogs: number,
   log: pino.Logger,
+  addresses?: string[],
 ): Promise<{ nextBlock: number; totalLogs: number }> {
   const query = {
     fromBlock,
     toBlock,
     // Empty LogFilter matches every log on the chain.
-    logs: [{}],
+    logs: addresses && addresses.length > 0 ? [{ address: addresses }] : [{}],
     fieldSelection: {
       log: [
         "Removed" as const,
@@ -275,9 +288,15 @@ async function runStream(
 
   const drainFlushes = (): Promise<void> =>
     new Promise((resolve) => {
-      if (activeFlushes === 0) { resolve(); return; }
+      if (activeFlushes === 0) {
+        resolve();
+        return;
+      }
       const check = () => {
-        if (activeFlushes === 0) { resolve(); return; }
+        if (activeFlushes === 0) {
+          resolve();
+          return;
+        }
         flushDone = check;
       };
       flushDone = check;
@@ -354,7 +373,14 @@ async function main(): Promise<void> {
     apiToken: env.HYPERSYNC_API_KEY,
   });
 
-  let { startBlock, totalLogs } = await getChainState(clickhouse, env.CHAIN_ID);
+  const initialSafeAddresses = await getSafeAddresses(env.CHAIN_ID);
+  log.info({ count: initialSafeAddresses.length }, "loaded safe addresses");
+
+  let { startBlock, totalLogs } = await getChainState(
+    clickhouse,
+    env.CHAIN_ID,
+    initialSafeAddresses,
+  );
   log.info({ startBlock, totalLogs }, "connected, resuming ingestion");
 
   // Continuous loop: stream up to the reorg-safe tip, then poll for new blocks.
@@ -371,6 +397,30 @@ async function main(): Promise<void> {
       continue;
     }
 
+    const safeAddresses = await getSafeAddresses(env.CHAIN_ID);
+
+    if (safeAddresses.length > 0) {
+      log.info(
+        {
+          fromBlock: startBlock,
+          toBlock: safeBlock,
+          tip,
+          reorgSafetyBlocks: chain.reorgSafetyBlocks,
+        },
+        "streaming safe addresses",
+      );
+      const res = await runStream(
+        hypersync,
+        env.CHAIN_ID,
+        startBlock,
+        safeBlock,
+        totalLogs,
+        log,
+        safeAddresses,
+      );
+      totalLogs = res.totalLogs;
+    }
+
     log.info(
       {
         fromBlock: startBlock,
@@ -378,7 +428,7 @@ async function main(): Promise<void> {
         tip,
         reorgSafetyBlocks: chain.reorgSafetyBlocks,
       },
-      "streaming",
+      "streaming all logs",
     );
     ({ nextBlock: startBlock, totalLogs } = await runStream(
       hypersync,
