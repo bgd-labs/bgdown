@@ -16,5 +16,5 @@ const tmp = "/tmp/trueblocks-openapi.yaml";
 await Bun.write(tmp, patched);
 
 const ast = await openapiTS(new URL(`file://${tmp}`));
-await Bun.write("trueblocks.d.ts", astToString(ast));
+await Bun.write("src/trueblocks.d.ts", astToString(ast));
 console.log("✅ trueblocks.d.ts generated");
