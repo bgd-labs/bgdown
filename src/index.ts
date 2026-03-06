@@ -6,6 +6,8 @@ import {
   type Log,
   type QueryResponse,
 } from "@envio-dev/hypersync-client";
+import { Cron } from "croner";
+import PQueue from "p-queue";
 import pino from "pino";
 import { CHAIN_BY_ID } from "./chains";
 import env from "./env";
@@ -348,7 +350,7 @@ async function runStream(
   return { nextBlock: lastBlock, totalLogs };
 }
 
-async function main(): Promise<void> {
+try {
   const chain = CHAIN_BY_ID.get(env.CHAIN_ID);
   if (!chain)
     throw new Error(`Chain ${env.CHAIN_ID} not found in chains config`);
@@ -376,74 +378,148 @@ async function main(): Promise<void> {
   const initialSafeAddresses = await getSafeAddresses(env.CHAIN_ID);
   log.info({ count: initialSafeAddresses.length }, "loaded safe addresses");
 
-  let { startBlock, totalLogs } = await getChainState(
+  let { startBlock: mainStartBlock, totalLogs } = await getChainState(
     clickhouse,
     env.CHAIN_ID,
     initialSafeAddresses,
   );
-  log.info({ startBlock, totalLogs }, "connected, resuming ingestion");
+  log.info({ mainStartBlock, totalLogs }, "connected, resuming ingestion");
+
+  const addressState = new Map<string, number>();
+  if (initialSafeAddresses.length > 0) {
+    const formattedAddresses = initialSafeAddresses
+      .map((a) => `'${a.toLowerCase().replace("0x", "")}'`)
+      .join(", ");
+    const query = `
+      SELECT lower(hex(address)) AS addr, max(block_number) AS max_block
+      FROM ${env.CLICKHOUSE_DB}.logs
+      WHERE chain_id = ${env.CHAIN_ID} AND lower(hex(address)) IN (${formattedAddresses})
+      GROUP BY address
+    `;
+    const result = await clickhouse.query({ query, format: "JSONEachRow" });
+    const rows = await result.json<{ addr: string; max_block: string }>();
+    for (const row of rows) {
+      addressState.set(`0x${row.addr}`, Number(row.max_block));
+    }
+  }
+
+  // Set any missing addresses to 0
+  for (const addr of initialSafeAddresses) {
+    const lower = addr.toLowerCase();
+    if (!addressState.has(lower)) {
+      addressState.set(lower, 0);
+    }
+  }
 
   // Continuous loop: stream up to the reorg-safe tip, then poll for new blocks.
-  while (true) {
-    const tip = await hypersync.getHeight();
-    const safeBlock = Math.max(startBlock, tip - chain.reorgSafetyBlocks);
+  const syncJob = new Cron(
+    `*/${POLL_INTERVAL_SECS} * * * * *`,
+    async () => {
+      // Prevent overlapping syncs
+      if (syncJob.isBusy()) return;
 
-    if (safeBlock <= startBlock) {
-      log.info(
-        { tip, safeBlock, reorgSafetyBlocks: chain.reorgSafetyBlocks },
-        "at reorg-safe tip, polling",
-      );
-      await Bun.sleep(POLL_INTERVAL_SECS * 1000);
-      continue;
-    }
+      try {
+        const tip = await hypersync.getHeight();
+        const safeBlock = Math.max(
+          mainStartBlock,
+          tip - chain.reorgSafetyBlocks,
+        );
 
-    const safeAddresses = await getSafeAddresses(env.CHAIN_ID);
+        const safeAddresses = await getSafeAddresses(env.CHAIN_ID);
 
-    if (safeAddresses.length > 0) {
-      log.info(
-        {
-          fromBlock: startBlock,
-          toBlock: safeBlock,
-          tip,
-          reorgSafetyBlocks: chain.reorgSafetyBlocks,
-        },
-        "streaming safe addresses",
-      );
-      const res = await runStream(
-        hypersync,
-        env.CHAIN_ID,
-        startBlock,
-        safeBlock,
-        totalLogs,
-        log,
-        safeAddresses,
-      );
-      totalLogs = res.totalLogs;
-    }
+        // Check for newly added safe addresses
+        for (const addr of safeAddresses) {
+          const lower = addr.toLowerCase();
+          if (!addressState.has(lower)) {
+            log.info({ address: addr }, "discovered new safe address");
+            const query = `
+            SELECT max(block_number) AS max_block
+            FROM ${env.CLICKHOUSE_DB}.logs
+            WHERE chain_id = ${env.CHAIN_ID} AND lower(hex(address)) = '${lower.replace("0x", "")}'
+          `;
+            const result = await clickhouse.query({
+              query,
+              format: "JSONEachRow",
+            });
+            const rows = await result.json<{ max_block: string }>();
+            addressState.set(lower, Number(rows[0]?.max_block ?? 0));
+          }
+        }
 
-    log.info(
-      {
-        fromBlock: startBlock,
-        toBlock: safeBlock,
-        tip,
-        reorgSafetyBlocks: chain.reorgSafetyBlocks,
-      },
-      "streaming all logs",
-    );
-    ({ nextBlock: startBlock, totalLogs } = await runStream(
-      hypersync,
-      env.CHAIN_ID,
-      startBlock,
-      safeBlock,
-      totalLogs,
-      log,
-    ));
-    log.info("caught up to safe tip, polling");
-    await Bun.sleep(POLL_INTERVAL_SECS * 1000);
-  }
-}
+        // Run for each safe address individually in parallel
+        const queue = new PQueue({ concurrency: 4 });
+        const streamPromises = safeAddresses.map((addr) =>
+          queue.add(async () => {
+            const lower = addr.toLowerCase();
+            const addrStartBlock = addressState.get(lower) ?? 0;
+            const addrSafeBlock = Math.max(
+              addrStartBlock,
+              tip - chain.reorgSafetyBlocks,
+            );
 
-main().catch((err) => {
+            if (addrSafeBlock > addrStartBlock) {
+              log.info(
+                {
+                  address: addr,
+                  fromBlock: addrStartBlock,
+                  toBlock: addrSafeBlock,
+                  tip,
+                  reorgSafetyBlocks: chain.reorgSafetyBlocks,
+                },
+                "streaming safe address individually",
+              );
+              const res = await runStream(
+                hypersync,
+                env.CHAIN_ID,
+                addrStartBlock,
+                addrSafeBlock,
+                0, // track independently so parallel logs aren't interleaved confusingly
+                log.child({ address: addr }),
+                [addr],
+              );
+              addressState.set(lower, res.nextBlock);
+              return res.totalLogs;
+            }
+            return 0;
+          }),
+        );
+
+        const logsSynced = await Promise.all(streamPromises);
+        totalLogs += logsSynced.reduce((a, b) => (a ?? 0) + (b ?? 0), 0);
+
+        if (safeBlock > mainStartBlock) {
+          log.info(
+            {
+              fromBlock: mainStartBlock,
+              toBlock: safeBlock,
+              tip,
+              reorgSafetyBlocks: chain.reorgSafetyBlocks,
+            },
+            "streaming all logs",
+          );
+          const res = await runStream(
+            hypersync,
+            env.CHAIN_ID,
+            mainStartBlock,
+            safeBlock,
+            totalLogs,
+            log,
+          );
+          mainStartBlock = res.nextBlock;
+          totalLogs = res.totalLogs;
+        }
+
+        log.info("caught up to safe tip, waiting for next cron tick");
+      } catch (err) {
+        log.error(err, "error during sync iteration");
+      }
+    },
+    { protect: true },
+  ); // protect: true prevents overlapping executions in croner
+
+  // Trigger immediately
+  syncJob.trigger();
+} catch (err) {
   pino().error(err, "fatal error");
   process.exit(1);
-});
+}

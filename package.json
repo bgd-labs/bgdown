@@ -15,9 +15,11 @@
     "@envio-dev/hypersync-client": "^1.1.0",
     "arkenv": "0.9.3",
     "arktype": "^2.2.0",
+    "croner": "^10.0.1",
     "elysia": "^1.4.27",
     "elysia-logger": "^0.5.2",
     "elysia-rate-limit": "^4.5.0",
+    "p-queue": "^9.1.0",
     "pino": "^10.3.1"
   },
   "devDependencies": {
