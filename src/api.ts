@@ -9,15 +9,27 @@ const MAX_BLOCK_RANGE = 100_000;
 
 const CLICKHOUSE_URL = "http://localhost:8123";
 
-// Extend as more chains are indexed.
-const CHAIN_NAMES: Record<string, string> = {
-  "1": "mainnet",
-  "10": "optimism",
-  "56": "bsc",
-  "137": "polygon",
-  "8453": "base",
-  "42161": "arbitrum",
-  "43114": "avalanche",
+const CHAIN_NAMES: Record<number, string> = {
+  1: "Ethereum",
+  10: "OP Mainnet",
+  56: "BNB Smart Chain",
+  100: "Gnosis",
+  137: "Polygon",
+  146: "Sonic",
+  324: "ZKsync Era",
+  1088: "Metis",
+  1868: "Soneium Mainnet",
+  4326: "MegaETH",
+  5000: "Mantle",
+  8453: "Base",
+  9745: "Plasma",
+  42161: "Arbitrum One",
+  42220: "Celo",
+  43114: "Avalanche",
+  57073: "Ink",
+  59144: "Linea Mainnet",
+  84532: "Base Sepolia",
+  534352: "Scroll",
 };
 
 const clickhouse = createClient({
@@ -108,16 +120,16 @@ new Elysia()
         format: "JSONEachRow",
       });
       const rows = await result.json<{ chain_id: string }>();
-      return rows.map(({ chain_id }) => ({
-        chainId: chain_id,
-        name: CHAIN_NAMES[chain_id] ?? `chain-${chain_id}`,
-      }));
+      return rows.map(({ chain_id }) => {
+        const id = Number(chain_id);
+        return { id, name: CHAIN_NAMES[id] ?? `chain-${id}` };
+      });
     },
     {
       response: {
         200: t.Array(
           t.Object({
-            chainId: t.String({ description: "EIP-155 chain ID" }),
+            id: t.Number({ description: "EIP-155 chain ID" }),
             name: t.String({ description: "Chain name" }),
           }),
         ),
@@ -130,7 +142,7 @@ new Elysia()
       const [countResult, partsResult] = await Promise.all([
         clickhouse.query({
           query:
-            "SELECT count() AS total_logs, max(block_number) AS max_block FROM ethereum.logs WHERE chain_id = {chainId: UInt64}",
+            "SELECT count() AS total_logs, max(block_number) AS max_block FROM ethereum.logs WHERE chain_id = {chainId: UInt32}",
           query_params: { chainId: params.chainId },
           format: "JSONEachRow",
         }),
@@ -199,10 +211,10 @@ new Elysia()
             log_index, address, data, topic0, topic1, topic2, topic3
           FROM ethereum.logs
           WHERE
-            chain_id     = {chainId: UInt64}
+            chain_id     = {chainId: UInt32}
             AND topic0   = {topic: String}
-            AND block_number >= {from: UInt64}
-            AND block_number <= {to: UInt64}
+            AND block_number >= {from: UInt32}
+            AND block_number <= {to: UInt32}
             ${addressClause}
           ORDER BY block_number, log_index
         `,

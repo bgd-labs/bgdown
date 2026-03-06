@@ -2,7 +2,7 @@ CREATE DATABASE IF NOT EXISTS ethereum;
 
 CREATE TABLE IF NOT EXISTS ethereum.logs
 (
-    chain_id          UInt64,
+    chain_id          UInt32,
     block_number      UInt64,
     block_hash        String          CODEC(ZSTD(3)),
     timestamp         UInt32          CODEC(DoubleDelta, ZSTD(3)),
