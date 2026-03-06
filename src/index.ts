@@ -276,15 +276,25 @@ class LogFlusher {
     if (this.flushError) throw this.flushError;
   }
 }
-async function runStream(
-  hypersync: HypersyncClient,
-  chainId: number,
-  fromBlock: number,
-  toBlock: number,
-  log: pino.Logger,
-  flusher: LogFlusher,
-  addresses?: string[],
-): Promise<{ nextBlock: number; totalLogs: number }> {
+type RunStreamConfig = {
+  hypersync: HypersyncClient;
+  chainId: number;
+  fromBlock: number;
+  toBlock: number;
+  log: pino.Logger;
+  flusher: LogFlusher;
+  addresses?: string[];
+};
+
+async function runStream({
+  hypersync,
+  chainId,
+  fromBlock,
+  toBlock,
+  log,
+  flusher,
+  addresses,
+}: RunStreamConfig): Promise<{ nextBlock: number; totalLogs: number }> {
   const query = {
     fromBlock,
     toBlock,
@@ -466,15 +476,15 @@ try {
                 },
                 "started streaming safe address individually",
               );
-              const res = await runStream(
+              const res = await runStream({
                 hypersync,
-                env.CHAIN_ID,
-                addrStartBlock,
-                addrSafeBlock,
-                log.child({ address: addr }),
+                chainId: env.CHAIN_ID,
+                fromBlock: addrStartBlock,
+                toBlock: addrSafeBlock,
+                log: log.child({ address: addr }),
                 flusher,
-                [addr],
-              );
+                addresses: [addr],
+              });
               addressState.set(lower, res.nextBlock);
               log.info(
                 {
@@ -501,14 +511,14 @@ try {
             },
             "started streaming all logs",
           );
-          const res = await runStream(
+          const res = await runStream({
             hypersync,
-            env.CHAIN_ID,
-            mainStartBlock,
-            safeBlock,
+            chainId: env.CHAIN_ID,
+            fromBlock: mainStartBlock,
+            toBlock: safeBlock,
             log,
             flusher,
-          );
+          });
           mainStartBlock = res.nextBlock;
           log.info(
             {
