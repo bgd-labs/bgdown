@@ -5,17 +5,16 @@ import { logger } from "elysia-logger";
 import { rateLimit } from "elysia-rate-limit";
 import { tokenSet } from "./auth";
 import { CHAIN_BY_ID } from "./chains";
+import env from "./env";
 
 const DEFAULT_LIMIT = 1_000;
 const MAX_LIMIT = 50_000;
 
-const CLICKHOUSE_URL = "http://localhost:8123";
-
 const clickhouse = createClient({
-  url: CLICKHOUSE_URL,
+  url: env.CLICKHOUSE_URL,
   username: "default",
   password: "",
-  database: "ethereum",
+  database: env.CLICKHOUSE_DB,
 });
 
 const Log = t.Object({
@@ -303,6 +302,6 @@ new Elysia()
       },
     },
   )
-  .listen(3000);
+  .listen(env.PORT);
 
-console.log("Listening on http://localhost:3000");
+console.log(`Listening on http://localhost:${env.PORT}`);

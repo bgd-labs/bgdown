@@ -13,6 +13,7 @@
     "@clickhouse/client": "^1.10.1",
     "@elysiajs/openapi": "^1.4.14",
     "@envio-dev/hypersync-client": "^1.1.0",
+    "arkenv": "0.9.3",
     "elysia": "^1.4.27",
     "elysia-logger": "^0.5.2",
     "elysia-rate-limit": "^4.5.0",

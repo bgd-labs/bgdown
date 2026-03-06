@@ -8,12 +8,7 @@ import {
 } from "@envio-dev/hypersync-client";
 import pino from "pino";
 import { CHAIN_BY_ID } from "./chains";
-
-const HYPERSYNC_API_KEY = "b5c5baee-7507-451c-bcfb-f0d1e790a5ab";
-const CHAIN_ID = 1; // Ethereum mainnet
-
-const CLICKHOUSE_URL = "http://localhost:8123";
-const CLICKHOUSE_DB = "ethereum";
+import env from "./env";
 
 const FLUSH_BATCH_SIZE = 500_000;
 const FLUSH_INTERVAL_MS = 30_000;
@@ -190,7 +185,7 @@ async function flushBatch(batch: LogRow[], log: pino.Logger): Promise<void> {
   // @clickhouse/client doesn't expose RowBinary as an insert format, so we
   // use the HTTP interface directly. RowBinary is ~2× faster than JSON and
   // lets us store hashes/addresses as true binary rather than hex strings.
-  const url = `${CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${CLICKHOUSE_DB}.logs FORMAT RowBinary`)}`;
+  const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.logs FORMAT RowBinary`)}`;
   const res = await fetch(url, { method: "POST", body: new Uint8Array(data) });
   if (!res.ok) {
     const body = await res.text();
@@ -307,16 +302,17 @@ async function runStream(
 }
 
 async function main(): Promise<void> {
-  const chain = CHAIN_BY_ID.get(CHAIN_ID);
-  if (!chain) throw new Error(`Chain ${CHAIN_ID} not found in chains config`);
+  const chain = CHAIN_BY_ID.get(env.CHAIN_ID);
+  if (!chain)
+    throw new Error(`Chain ${env.CHAIN_ID} not found in chains config`);
 
-  const log = pino({ level: "info" }).child({ chainId: CHAIN_ID });
+  const log = pino({ level: env.LOG_LEVEL }).child({ chainId: env.CHAIN_ID });
 
   const clickhouse = createClient({
-    url: CLICKHOUSE_URL,
+    url: env.CLICKHOUSE_URL,
     username: "default",
     password: "",
-    database: CLICKHOUSE_DB,
+    database: env.CLICKHOUSE_DB,
     clickhouse_settings: {
       async_insert: 1,
       wait_for_async_insert: 0,
@@ -325,10 +321,10 @@ async function main(): Promise<void> {
 
   const hypersync = new HypersyncClient({
     url: chain.hypersyncUrl,
-    apiToken: HYPERSYNC_API_KEY,
+    apiToken: env.HYPERSYNC_API_KEY,
   });
 
-  let { startBlock, totalLogs } = await getChainState(clickhouse, CHAIN_ID);
+  let { startBlock, totalLogs } = await getChainState(clickhouse, env.CHAIN_ID);
   log.info({ startBlock, totalLogs }, "connected, resuming ingestion");
 
   // Continuous loop: stream up to the reorg-safe tip, then poll for new blocks.
@@ -356,7 +352,7 @@ async function main(): Promise<void> {
     );
     ({ nextBlock: startBlock, totalLogs } = await runStream(
       hypersync,
-      CHAIN_ID,
+      env.CHAIN_ID,
       startBlock,
       safeBlock,
       totalLogs,
