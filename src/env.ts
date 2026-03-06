@@ -5,6 +5,7 @@ const raw = arkenv({
   CLICKHOUSE_URL: "string.url = 'http://localhost:8123'",
   CLICKHOUSE_DB: "string = 'ethereum'",
   HYPERSYNC_API_KEY: "string",
+  RPC_URL: "string.url?",
   LOG_LEVEL: "'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' = 'info'",
   PORT: "number.port = 3000",
   CHAIN_ID: "number = 1",
@@ -14,9 +15,10 @@ const raw = arkenv({
 // any credentials/database embedded in the URL so they can be passed explicitly
 // to @clickhouse/client (which warns when the URL overrides explicit config).
 const parsedUrl = new URL(
-  raw.CLICKHOUSE_URL
-    .replace(/^clickhouse:\/\//, "http://")
-    .replace(/:9000(\/|$)/, ":8123$1"),
+  raw.CLICKHOUSE_URL.replace(/^clickhouse:\/\//, "http://").replace(
+    /:9000(\/|$)/,
+    ":8123$1",
+  ),
 );
 
 const CLICKHOUSE_USERNAME = parsedUrl.username || "default";

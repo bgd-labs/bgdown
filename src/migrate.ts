@@ -22,6 +22,10 @@ const migrations: Migration[] = [
     name: "0002_delete_blocks_gt_11289889",
     up: (await import("./migrations/0002_delete_blocks_gt_11289889")).up,
   },
+  {
+    name: "0003_create_blocks_table",
+    up: (await import("./migrations/0003_create_blocks_table")).up,
+  },
 ];
 
 // ── Runner ───────────────────────────────────────────────────────────────────

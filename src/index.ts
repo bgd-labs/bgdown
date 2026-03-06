@@ -9,15 +9,19 @@ import {
 } from "@envio-dev/hypersync-client";
 import { Cron } from "croner";
 import pino from "pino";
+import { createPublicClient, http } from "viem";
 import { CHAIN_BY_ID } from "./chains";
 import env from "./env";
 import { ensureSchema } from "./schema";
 
-const FLUSH_BATCH_SIZE = 250_000;
+const LOG_FLUSH_BATCH_SIZE = 250_000;
+const BLOCK_FLUSH_BATCH_SIZE = 50_000;
 const FLUSH_INTERVAL_MS = 10_000;
 
 // Seconds to wait before re-checking the chain tip after catching up.
 const POLL_INTERVAL_SECS = 10;
+
+// ── Row types ───────────────────────────────────────────────────────────────
 
 interface LogRow {
   chain_id: number;
@@ -35,6 +39,40 @@ interface LogRow {
   topic3: Buffer | null;
   removed: number;
 }
+
+interface BlockRow {
+  chain_id: number;
+  number: number;
+  hash: Buffer; // FixedString(32)
+  parent_hash: Buffer; // FixedString(32)
+  nonce: bigint; // UInt64
+  sha3_uncles: Buffer; // FixedString(32)
+  logs_bloom: Buffer; // FixedString(256)
+  transactions_root: Buffer; // FixedString(32)
+  state_root: Buffer; // FixedString(32)
+  receipts_root: Buffer; // FixedString(32)
+  miner: Buffer; // FixedString(20)
+  difficulty: bigint; // UInt64
+  total_difficulty: Buffer; // String — hex representation
+  extra_data: Buffer; // String — raw bytes
+  size: bigint; // UInt64
+  gas_limit: bigint; // UInt64
+  gas_used: bigint; // UInt64
+  timestamp: number; // UInt32
+  base_fee_per_gas: bigint | null; // Nullable(UInt64)
+  blob_gas_used: bigint | null; // Nullable(UInt64)
+  excess_blob_gas: bigint | null; // Nullable(UInt64)
+  parent_beacon_block_root: Buffer | null; // Nullable(FixedString(32))
+  withdrawals_root: Buffer | null; // Nullable(FixedString(32))
+  withdrawals: Buffer; // String — JSON
+  uncles: Buffer; // String — JSON
+  mix_hash: Buffer; // FixedString(32)
+  l1_block_number: number | null; // Nullable(UInt64)
+  send_count: Buffer | null; // Nullable(String)
+  send_root: Buffer | null; // Nullable(FixedString(32))
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function buildTimestampMap(blocks: Block[]): Map<number, number> {
   const map = new Map<number, number>();
@@ -73,6 +111,47 @@ function logToRow(
     topic2: log.topics[2] ? hexBuf(log.topics[2], 32) : null,
     topic3: log.topics[3] ? hexBuf(log.topics[3], 32) : null,
     removed: log.removed ? 1 : 0,
+  };
+}
+
+function blockToRow(block: Block, chainId: number): BlockRow {
+  const totalDiffHex = block.totalDifficulty
+    ? `0x${block.totalDifficulty.toString(16)}`
+    : "0x0";
+  return {
+    chain_id: chainId,
+    number: block.number ?? 0,
+    hash: hexBuf(block.hash, 32),
+    parent_hash: hexBuf(block.parentHash, 32),
+    nonce: block.nonce ?? 0n,
+    sha3_uncles: hexBuf(block.sha3Uncles, 32),
+    logs_bloom: hexBuf(block.logsBloom, 256),
+    transactions_root: hexBuf(block.transactionsRoot, 32),
+    state_root: hexBuf(block.stateRoot, 32),
+    receipts_root: hexBuf(block.receiptsRoot, 32),
+    miner: hexBuf(block.miner, 20),
+    difficulty: block.difficulty ?? 0n,
+    total_difficulty: Buffer.from(totalDiffHex, "utf8"),
+    extra_data: hexBuf(block.extraData, 0),
+    size: block.size ?? 0n,
+    gas_limit: block.gasLimit ?? 0n,
+    gas_used: block.gasUsed ?? 0n,
+    timestamp: block.timestamp ?? 0,
+    base_fee_per_gas: block.baseFeePerGas ?? null,
+    blob_gas_used: block.blobGasUsed ?? null,
+    excess_blob_gas: block.excessBlobGas ?? null,
+    parent_beacon_block_root: block.parentBeaconBlockRoot
+      ? hexBuf(block.parentBeaconBlockRoot, 32)
+      : null,
+    withdrawals_root: block.withdrawalsRoot
+      ? hexBuf(block.withdrawalsRoot, 32)
+      : null,
+    withdrawals: Buffer.from(JSON.stringify(block.withdrawals ?? []), "utf8"),
+    uncles: Buffer.from(JSON.stringify(block.uncles ?? []), "utf8"),
+    mix_hash: hexBuf(block.mixHash, 32),
+    l1_block_number: block.l1BlockNumber ?? null,
+    send_count: block.sendCount ? Buffer.from(block.sendCount, "utf8") : null,
+    send_root: block.sendRoot ? hexBuf(block.sendRoot, 32) : null,
   };
 }
 
@@ -165,6 +244,207 @@ function serializeBatch(rows: LogRow[]): Buffer {
   return buf;
 }
 
+// Write a bigint as UInt64 LE using two UInt32 writes for compatibility.
+function writeUInt64LE(buf: Buffer, value: bigint, offset: number): number {
+  buf.writeUInt32LE(Number(value & 0xffffffffn), offset);
+  buf.writeUInt32LE(Number((value >> 32n) & 0xffffffffn), offset + 4);
+  return offset + 8;
+}
+
+function serializeBlockBatch(rows: BlockRow[]): Buffer {
+  // First pass: compute total byte count.
+  let size = 0;
+  for (const row of rows) {
+    size += 4; // chain_id UInt32
+    size += 8; // number UInt64
+    size += 32; // hash FixedString(32)
+    size += 32; // parent_hash FixedString(32)
+    size += 8; // nonce UInt64
+    size += 32; // sha3_uncles FixedString(32)
+    size += 256; // logs_bloom FixedString(256)
+    size += 32; // transactions_root FixedString(32)
+    size += 32; // state_root FixedString(32)
+    size += 32; // receipts_root FixedString(32)
+    size += 20; // miner FixedString(20)
+    size += 8; // difficulty UInt64
+    size +=
+      varUIntSize(row.total_difficulty.length) + row.total_difficulty.length; // total_difficulty String
+    size += varUIntSize(row.extra_data.length) + row.extra_data.length; // extra_data String
+    size += 8; // size UInt64
+    size += 8; // gas_limit UInt64
+    size += 8; // gas_used UInt64
+    size += 4; // timestamp UInt32
+    size += 1 + (row.base_fee_per_gas !== null ? 8 : 0); // Nullable(UInt64)
+    size += 1 + (row.blob_gas_used !== null ? 8 : 0);
+    size += 1 + (row.excess_blob_gas !== null ? 8 : 0);
+    size += 1 + (row.parent_beacon_block_root !== null ? 32 : 0); // Nullable(FixedString(32))
+    size += 1 + (row.withdrawals_root !== null ? 32 : 0);
+    size += varUIntSize(row.withdrawals.length) + row.withdrawals.length; // withdrawals String
+    size += varUIntSize(row.uncles.length) + row.uncles.length; // uncles String
+    size += 32; // mix_hash FixedString(32)
+    size += 1 + (row.l1_block_number !== null ? 8 : 0); // Nullable(UInt64)
+    size +=
+      1 +
+      (row.send_count !== null
+        ? varUIntSize(row.send_count.length) + row.send_count.length
+        : 0); // Nullable(String)
+    size += 1 + (row.send_root !== null ? 32 : 0); // Nullable(FixedString(32))
+  }
+
+  const buf = Buffer.allocUnsafe(size);
+  let off = 0;
+
+  for (const row of rows) {
+    buf.writeUInt32LE(row.chain_id, off);
+    off += 4;
+    // number UInt64
+    buf.writeUInt32LE(row.number, off);
+    off += 4;
+    buf.writeUInt32LE(0, off);
+    off += 4;
+    row.hash.copy(buf, off);
+    off += 32;
+    row.parent_hash.copy(buf, off);
+    off += 32;
+    off = writeUInt64LE(buf, row.nonce, off);
+    row.sha3_uncles.copy(buf, off);
+    off += 32;
+    row.logs_bloom.copy(buf, off);
+    off += 256;
+    row.transactions_root.copy(buf, off);
+    off += 32;
+    row.state_root.copy(buf, off);
+    off += 32;
+    row.receipts_root.copy(buf, off);
+    off += 32;
+    row.miner.copy(buf, off);
+    off += 20;
+    off = writeUInt64LE(buf, row.difficulty, off);
+    off = writeVarUInt(buf, row.total_difficulty.length, off);
+    row.total_difficulty.copy(buf, off);
+    off += row.total_difficulty.length;
+    off = writeVarUInt(buf, row.extra_data.length, off);
+    row.extra_data.copy(buf, off);
+    off += row.extra_data.length;
+    off = writeUInt64LE(buf, row.size, off);
+    off = writeUInt64LE(buf, row.gas_limit, off);
+    off = writeUInt64LE(buf, row.gas_used, off);
+    buf.writeUInt32LE(row.timestamp, off);
+    off += 4;
+    // Nullable UInt64 fields
+    for (const val of [
+      row.base_fee_per_gas,
+      row.blob_gas_used,
+      row.excess_blob_gas,
+    ] as const) {
+      if (val === null) {
+        buf[off++] = 1;
+      } else {
+        buf[off++] = 0;
+        off = writeUInt64LE(buf, val, off);
+      }
+    }
+    // Nullable FixedString(32) fields
+    for (const val of [
+      row.parent_beacon_block_root,
+      row.withdrawals_root,
+    ] as const) {
+      if (val === null) {
+        buf[off++] = 1;
+      } else {
+        buf[off++] = 0;
+        val.copy(buf, off);
+        off += 32;
+      }
+    }
+    // withdrawals String (JSON)
+    off = writeVarUInt(buf, row.withdrawals.length, off);
+    row.withdrawals.copy(buf, off);
+    off += row.withdrawals.length;
+    // uncles String (JSON)
+    off = writeVarUInt(buf, row.uncles.length, off);
+    row.uncles.copy(buf, off);
+    off += row.uncles.length;
+    // mix_hash FixedString(32)
+    row.mix_hash.copy(buf, off);
+    off += 32;
+    // l1_block_number Nullable(UInt64)
+    if (row.l1_block_number === null) {
+      buf[off++] = 1;
+    } else {
+      buf[off++] = 0;
+      buf.writeUInt32LE(row.l1_block_number, off);
+      off += 4;
+      buf.writeUInt32LE(0, off);
+      off += 4;
+    }
+    // send_count Nullable(String)
+    if (row.send_count === null) {
+      buf[off++] = 1;
+    } else {
+      buf[off++] = 0;
+      off = writeVarUInt(buf, row.send_count.length, off);
+      row.send_count.copy(buf, off);
+      off += row.send_count.length;
+    }
+    // send_root Nullable(FixedString(32))
+    if (row.send_root === null) {
+      buf[off++] = 1;
+    } else {
+      buf[off++] = 0;
+      row.send_root.copy(buf, off);
+      off += 32;
+    }
+  }
+
+  return buf;
+}
+
+async function flushBlockBatch(
+  batch: BlockRow[],
+  log: pino.Logger,
+): Promise<void> {
+  if (batch.length === 0) return;
+  const data = serializeBlockBatch(batch);
+  const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.blocks FORMAT RowBinary`)}`;
+  const credentials = btoa(
+    `${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`,
+  );
+  const res = await fetch(url, {
+    method: "POST",
+    body: new Uint8Array(data),
+    headers: { Authorization: `Basic ${credentials}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    log.error({ status: res.status, body }, "ClickHouse block insert failed");
+    throw new Error(`ClickHouse block insert failed [${res.status}]: ${body}`);
+  }
+}
+
+const REORG_SAFETY_FALLBACK = 64;
+
+async function getFinalizedBlock(
+  hypersync: HypersyncClient,
+  log: pino.Logger,
+): Promise<number> {
+  try {
+    const client = createPublicClient({
+      transport: http(env.RPC_URL),
+    });
+    const block = await client.getBlock({ blockTag: "finalized" });
+    return Number(block.number);
+  } catch (err) {
+    const tip = await hypersync.getHeight();
+    const fallback = tip - REORG_SAFETY_FALLBACK;
+    log.warn(
+      { err, tip, fallback },
+      "finalized block query failed, falling back to tip - safety margin",
+    );
+    return fallback;
+  }
+}
+
 async function getChainState(
   clickhouse: ReturnType<typeof createClient>,
   chainId: number,
@@ -182,7 +462,7 @@ async function getChainState(
   };
 }
 
-async function flushBatch(batch: LogRow[], log: pino.Logger): Promise<void> {
+async function flushLogBatch(batch: LogRow[], log: pino.Logger): Promise<void> {
   if (batch.length === 0) return;
   const data = serializeBatch(batch);
   // @clickhouse/client doesn't expose RowBinary as an insert format, so we
@@ -204,27 +484,30 @@ async function flushBatch(batch: LogRow[], log: pino.Logger): Promise<void> {
   }
 }
 
-class LogFlusher {
-  private batch: LogRow[] = [];
+class Flusher<T> {
+  private batch: T[] = [];
   private lastFlushAt = Date.now();
   private flushPromise: Promise<void> | null = null;
   private flushError: Error | null = null;
 
   constructor(
     private readonly log: pino.Logger,
-    public totalLogs: number = 0,
+    private readonly doFlush: (batch: T[], log: pino.Logger) => Promise<void>,
+    private readonly label: string,
+    private readonly batchSize: number,
+    public totalRows: number = 0,
   ) {}
 
-  async enqueue(rows: LogRow[]) {
+  async enqueue(rows: T[]) {
     if (this.flushError) throw this.flushError;
     if (rows.length === 0) return;
 
     this.batch.push(...rows);
-    this.totalLogs += rows.length;
+    this.totalRows += rows.length;
 
     const now = Date.now();
     if (
-      this.batch.length >= FLUSH_BATCH_SIZE ||
+      this.batch.length >= this.batchSize ||
       now - this.lastFlushAt >= FLUSH_INTERVAL_MS
     ) {
       await this.flush();
@@ -234,7 +517,6 @@ class LogFlusher {
   private async flush() {
     if (this.batch.length === 0) return;
 
-    // Wait for the previous flush to finish (backpressure of 1 active flush)
     if (this.flushPromise) {
       await this.flushPromise;
       if (this.flushError) throw this.flushError;
@@ -245,9 +527,12 @@ class LogFlusher {
     this.lastFlushAt = Date.now();
 
     const count = rowsToFlush.length;
-    this.flushPromise = flushBatch(rowsToFlush, this.log)
+    this.flushPromise = this.doFlush(rowsToFlush, this.log)
       .then(() => {
-        this.log.info({ count, totalLogs: this.totalLogs }, "flushed batch");
+        this.log.info(
+          { count, total: this.totalRows, kind: this.label },
+          "flushed batch",
+        );
         this.flushPromise = null;
       })
       .catch((err) => {
@@ -273,7 +558,8 @@ type RunStreamConfig = {
   fromBlock: number;
   toBlock: number;
   log: pino.Logger;
-  flusher: LogFlusher;
+  logFlusher: Flusher<LogRow>;
+  blockFlusher: Flusher<BlockRow>;
 };
 
 async function runStream({
@@ -282,11 +568,13 @@ async function runStream({
   fromBlock,
   toBlock,
   log,
-  flusher,
+  logFlusher,
+  blockFlusher,
 }: RunStreamConfig): Promise<{ nextBlock: number; totalLogs: number }> {
   const query = {
     fromBlock,
     toBlock,
+    includeAllBlocks: true,
     logs: [{ include: {} }],
     fieldSelection: {
       log: [
@@ -303,7 +591,36 @@ async function runStream({
         "Topic2",
         "Topic3",
       ],
-      block: ["Number", "Timestamp"],
+      block: [
+        "Number",
+        "Hash",
+        "ParentHash",
+        "Nonce",
+        "Sha3Uncles",
+        "LogsBloom",
+        "TransactionsRoot",
+        "StateRoot",
+        "ReceiptsRoot",
+        "Miner",
+        "Difficulty",
+        "TotalDifficulty",
+        "ExtraData",
+        "Size",
+        "GasLimit",
+        "GasUsed",
+        "Timestamp",
+        "Uncles",
+        "BaseFeePerGas",
+        "BlobGasUsed",
+        "ExcessBlobGas",
+        "ParentBeaconBlockRoot",
+        "WithdrawalsRoot",
+        "Withdrawals",
+        "L1BlockNumber",
+        "SendCount",
+        "SendRoot",
+        "MixHash",
+      ],
     },
     joinMode: JoinMode.Default,
   } satisfies Query;
@@ -343,12 +660,14 @@ async function runStream({
 
       const timestamps = buildTimestampMap(res.data.blocks);
 
-      const batch = res.data.logs.map((log) =>
-        logToRow(log, chainId, timestamps),
+      const logBatch = res.data.logs.map((l) =>
+        logToRow(l, chainId, timestamps),
       );
+      totalLogs += logBatch.length;
+      await logFlusher.enqueue(logBatch);
 
-      totalLogs += batch.length;
-      await flusher.enqueue(batch);
+      const blockBatch = res.data.blocks.map((b) => blockToRow(b, chainId));
+      await blockFlusher.enqueue(blockBatch);
     }
   } finally {
     await receiver.close();
@@ -394,13 +713,12 @@ try {
     `*/${POLL_INTERVAL_SECS} * * * * *`,
     async () => {
       try {
-        const tip = await hypersync.getHeight();
-        const safeBlock = Math.max(startBlock, tip - chain.reorgSafetyBlocks);
+        const safeBlock = await getFinalizedBlock(hypersync, log);
 
         if (safeBlock <= startBlock) {
           log.info(
-            { tip, safeBlock, reorgSafetyBlocks: chain.reorgSafetyBlocks },
-            "at reorg-safe tip, waiting for next cron tick",
+            { safeBlock, startBlock },
+            "at finalized tip, waiting for next cron tick",
           );
           return;
         }
@@ -409,25 +727,37 @@ try {
           {
             fromBlock: startBlock,
             toBlock: safeBlock,
-            tip,
-            reorgSafetyBlocks: chain.reorgSafetyBlocks,
           },
           "started streaming",
         );
 
-        const flusher = new LogFlusher(log, totalLogs);
+        const logFlusher = new Flusher<LogRow>(
+          log,
+          flushLogBatch,
+          "logs",
+          LOG_FLUSH_BATCH_SIZE,
+          totalLogs,
+        );
+        const blockFlusher = new Flusher<BlockRow>(
+          log,
+          flushBlockBatch,
+          "blocks",
+          BLOCK_FLUSH_BATCH_SIZE,
+        );
         const res = await runStream({
           hypersync,
           chainId: env.CHAIN_ID,
           fromBlock: startBlock,
           toBlock: safeBlock,
           log,
-          flusher,
+          logFlusher,
+          blockFlusher,
         });
-        await flusher.waitDrain();
+        await logFlusher.waitDrain();
+        await blockFlusher.waitDrain();
 
         startBlock = res.nextBlock;
-        totalLogs = flusher.totalLogs;
+        totalLogs = logFlusher.totalRows;
 
         log.info(
           {
