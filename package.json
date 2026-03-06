@@ -2,14 +2,19 @@
   "name": "eth-logs-downloader",
   "version": "1.0.0",
   "scripts": {
-    "start": "bun run src/index.ts",
+    "ingest": "bun run src/index.ts",
+    "api": "bun run src/api.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/"
   },
   "dependencies": {
     "@clickhouse/client": "^1.10.1",
-    "@envio-dev/hypersync-client": "^1.1.0"
+    "@elysiajs/openapi": "^1.4.14",
+    "@envio-dev/hypersync-client": "^1.1.0",
+    "elysia": "^1.4.27",
+    "elysia-logger": "^0.5.2",
+    "elysia-rate-limit": "^4.5.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.6",

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS ethereum.logs
     chain_id          UInt64,
     block_number      UInt64,
     block_hash        String          CODEC(ZSTD(3)),
+    timestamp         UInt32          CODEC(DoubleDelta, ZSTD(3)),
     transaction_hash  String          CODEC(ZSTD(3)),
     transaction_index UInt32,
     log_index         UInt32,

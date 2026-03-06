@@ -1,5 +1,6 @@
 import { createClient } from "@clickhouse/client";
 import {
+  type Block,
   HypersyncClient,
   JoinMode,
   type Log,
@@ -23,6 +24,7 @@ interface LogRow {
   chain_id: number;
   block_number: number;
   block_hash: string;
+  timestamp: number;
   transaction_hash: string;
   transaction_index: number;
   log_index: number;
@@ -35,11 +37,26 @@ interface LogRow {
   removed: number;
 }
 
-function logToRow(log: Log, chainId: number): LogRow {
+function buildTimestampMap(blocks: Block[]): Map<number, number> {
+  const map = new Map<number, number>();
+  for (const block of blocks) {
+    if (block.number !== undefined && block.timestamp !== undefined) {
+      map.set(block.number, block.timestamp);
+    }
+  }
+  return map;
+}
+
+function logToRow(
+  log: Log,
+  chainId: number,
+  timestamps: Map<number, number>,
+): LogRow {
   return {
     chain_id: chainId,
     block_number: log.blockNumber ?? 0,
     block_hash: log.blockHash ?? "",
+    timestamp: timestamps.get(log.blockNumber ?? 0) ?? 0,
     transaction_hash: log.transactionHash ?? "",
     transaction_index: log.transactionIndex ?? 0,
     log_index: log.logIndex ?? 0,
@@ -105,9 +122,9 @@ async function runStream(
         "Topic2" as const,
         "Topic3" as const,
       ],
+      block: ["Number" as const, "Timestamp" as const],
     },
-    // Avoid pulling in transactions / traces / blocks we don't need.
-    joinMode: JoinMode.JoinNothing,
+    joinMode: JoinMode.Default,
   };
 
   const receiver = await hypersync.stream(query, {});
@@ -139,8 +156,9 @@ async function runStream(
 
       lastBlock = res.nextBlock;
 
+      const timestamps = buildTimestampMap(res.data.blocks);
       for (const log of res.data.logs) {
-        batch.push(logToRow(log, chainId));
+        batch.push(logToRow(log, chainId, timestamps));
       }
 
       const elapsed = Date.now() - lastFlushAt;
