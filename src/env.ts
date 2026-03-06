@@ -21,9 +21,9 @@ const parsedUrl = new URL(
 
 const CLICKHOUSE_USERNAME = parsedUrl.username || "default";
 const CLICKHOUSE_PASSWORD = parsedUrl.password || "";
-// Database can come from the URL path (/dbname) or the CLICKHOUSE_DB env var.
+// Explicit CLICKHOUSE_DB env var takes priority; URL path is the fallback.
 const CLICKHOUSE_DB =
-  parsedUrl.pathname.replace(/^\//, "") || raw.CLICKHOUSE_DB;
+  raw.CLICKHOUSE_DB || parsedUrl.pathname.replace(/^\//, "");
 
 // Strip credentials and path from the URL before handing it to the client.
 parsedUrl.username = "";
