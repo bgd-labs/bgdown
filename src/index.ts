@@ -254,9 +254,10 @@ class LogFlusher {
     this.batch = [];
     this.lastFlushAt = Date.now();
 
+    const count = rowsToFlush.length;
     this.flushPromise = flushBatch(rowsToFlush, this.log)
       .then(() => {
-        this.log.info({ totalLogs: this.totalLogs }, "flushed batch");
+        this.log.info({ count, totalLogs: this.totalLogs }, "flushed batch");
         this.flushPromise = null;
       })
       .catch((err) => {
