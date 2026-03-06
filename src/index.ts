@@ -444,7 +444,7 @@ try {
         }
 
         // Run for each safe address individually in parallel
-        const queue = new PQueue({ concurrency: 4 });
+        const queue = new PQueue({ concurrency: 5 });
         const streamPromises = safeAddresses.map((addr) =>
           queue.add(async () => {
             const lower = addr.toLowerCase();
