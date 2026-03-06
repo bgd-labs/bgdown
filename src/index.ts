@@ -466,7 +466,7 @@ try {
                   tip,
                   reorgSafetyBlocks: chain.reorgSafetyBlocks,
                 },
-                "streaming safe address individually",
+                "started streaming safe address individually",
               );
               const res = await runStream(
                 hypersync,
@@ -504,7 +504,7 @@ try {
               tip,
               reorgSafetyBlocks: chain.reorgSafetyBlocks,
             },
-            "streaming all logs",
+            "started streaming all logs",
           );
           const res = await runStream(
             hypersync,
