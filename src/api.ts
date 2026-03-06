@@ -241,9 +241,9 @@ new Elysia()
             concat('0x', lower(hex(address)))           AS address_hex,
             concat('0x', lower(hex(data)))              AS data_hex,
             concat('0x', lower(hex(topic0)))            AS topic0_hex,
-            if(topic1 IS NULL, NULL, concat('0x', lower(hex(topic1)))) AS topic1_hex,
-            if(topic2 IS NULL, NULL, concat('0x', lower(hex(topic2)))) AS topic2_hex,
-            if(topic3 IS NULL, NULL, concat('0x', lower(hex(topic3)))) AS topic3_hex
+            if(isNull(topic1), NULL, concat('0x', lower(hex(assumeNotNull(topic1))))) AS topic1_hex,
+            if(isNull(topic2), NULL, concat('0x', lower(hex(assumeNotNull(topic2))))) AS topic2_hex,
+            if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex
           FROM ethereum.logs
           WHERE
             chain_id = {chainId: UInt32}
