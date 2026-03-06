@@ -2,6 +2,7 @@
   "name": "eth-logs-downloader",
   "version": "1.0.0",
   "scripts": {
+    "reset": "docker compose down -v && docker compose up -d",
     "ingest": "bun run src/index.ts",
     "api": "bun run src/api.ts",
     "typecheck": "tsgo --noEmit",
