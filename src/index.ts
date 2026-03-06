@@ -478,6 +478,15 @@ try {
                 [addr],
               );
               addressState.set(lower, res.nextBlock);
+              log.info(
+                {
+                  address: addr,
+                  fromBlock: addrStartBlock,
+                  toBlock: addrSafeBlock,
+                  logsSynced: res.totalLogs,
+                },
+                "finished streaming safe address individually",
+              );
               return res.totalLogs;
             }
             return 0;
@@ -505,8 +514,18 @@ try {
             totalLogs,
             log,
           );
+          const logsSyncedInMain = res.totalLogs - totalLogs;
           mainStartBlock = res.nextBlock;
           totalLogs = res.totalLogs;
+
+          log.info(
+            {
+              fromBlock: mainStartBlock,
+              toBlock: safeBlock,
+              logsSynced: logsSyncedInMain,
+            },
+            "finished streaming all logs",
+          );
         }
 
         log.info("caught up to safe tip, waiting for next cron tick");
