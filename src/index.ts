@@ -77,64 +77,78 @@ function logToRow(
   };
 }
 
-// LEB128 variable-length unsigned integer (used by ClickHouse RowBinary for String lengths).
-function varUInt(n: number): Buffer {
-  const bytes: number[] = [];
+// Returns the number of bytes needed to encode n as LEB128.
+function varUIntSize(n: number): number {
+  if (n === 0) return 1;
+  let size = 0;
+  let v = n;
+  while (v > 0) { v >>>= 7; size++; }
+  return size;
+}
+
+// Writes n as LEB128 into buf at offset and returns the new offset.
+function writeVarUInt(buf: Buffer, n: number, offset: number): number {
   while (n > 0x7f) {
-    bytes.push((n & 0x7f) | 0x80);
+    buf[offset++] = (n & 0x7f) | 0x80;
     n >>>= 7;
   }
-  bytes.push(n);
-  return Buffer.from(bytes);
+  buf[offset++] = n;
+  return offset;
 }
 
 // Serialise a batch of rows into a single RowBinary buffer.
-// Column order must match the schema exactly.
+// Pre-computes the exact size to avoid O(rows × 20) small Buffer allocations
+// and the subsequent Buffer.concat() over millions of entries.
 function serializeBatch(rows: LogRow[]): Buffer {
-  const parts: Buffer[] = [];
+  // First pass: compute total byte count.
+  let size = 0;
   for (const row of rows) {
-    const u32 = Buffer.allocUnsafe(4);
-    u32.writeUInt32LE(row.chain_id);
-    parts.push(u32);
+    size += 4;  // chain_id UInt32
+    size += 8;  // block_number UInt64
+    size += 32; // block_hash FixedString(32)
+    size += 4;  // timestamp UInt32
+    size += 32; // transaction_hash FixedString(32)
+    size += 4;  // transaction_index UInt32
+    size += 4;  // log_index UInt32
+    size += 20; // address FixedString(20)
+    size += varUIntSize(row.data.length) + row.data.length; // data String
+    size += 32; // topic0 FixedString(32)
+    size += 1 + (row.topic1 !== null ? 32 : 0); // topic1 Nullable(FixedString(32))
+    size += 1 + (row.topic2 !== null ? 32 : 0); // topic2
+    size += 1 + (row.topic3 !== null ? 32 : 0); // topic3
+    size += 1;  // removed UInt8
+  }
 
-    const u64 = Buffer.allocUnsafe(8);
-    u64.writeBigUInt64LE(BigInt(row.block_number));
-    parts.push(u64);
+  const buf = Buffer.allocUnsafe(size);
+  let off = 0;
 
-    parts.push(row.block_hash);
-
-    const ts = Buffer.allocUnsafe(4);
-    ts.writeUInt32LE(row.timestamp);
-    parts.push(ts);
-
-    parts.push(row.transaction_hash);
-
-    const ti = Buffer.allocUnsafe(4);
-    ti.writeUInt32LE(row.transaction_index);
-    parts.push(ti);
-
-    const li = Buffer.allocUnsafe(4);
-    li.writeUInt32LE(row.log_index);
-    parts.push(li);
-
-    parts.push(row.address);
-
-    // String: varint(len) + bytes
-    parts.push(varUInt(row.data.length), row.data);
-
-    parts.push(row.topic0);
-
-    for (const topic of [row.topic1, row.topic2, row.topic3]) {
+  for (const row of rows) {
+    buf.writeUInt32LE(row.chain_id, off); off += 4;
+    // Write UInt64 as two LE UInt32s. Block numbers fit in UInt32 for the
+    // foreseeable future (Ethereum is at ~22M; max UInt32 is ~4.3B).
+    buf.writeUInt32LE(row.block_number, off); off += 4;
+    buf.writeUInt32LE(0, off); off += 4;
+    row.block_hash.copy(buf, off); off += 32;
+    buf.writeUInt32LE(row.timestamp, off); off += 4;
+    row.transaction_hash.copy(buf, off); off += 32;
+    buf.writeUInt32LE(row.transaction_index, off); off += 4;
+    buf.writeUInt32LE(row.log_index, off); off += 4;
+    row.address.copy(buf, off); off += 20;
+    off = writeVarUInt(buf, row.data.length, off);
+    row.data.copy(buf, off); off += row.data.length;
+    row.topic0.copy(buf, off); off += 32;
+    for (const topic of [row.topic1, row.topic2, row.topic3] as const) {
       if (topic === null) {
-        parts.push(Buffer.from([1])); // null flag
+        buf[off++] = 1; // null flag
       } else {
-        parts.push(Buffer.from([0]), topic); // not-null flag + bytes
+        buf[off++] = 0; // non-null flag
+        topic.copy(buf, off); off += 32;
       }
     }
-
-    parts.push(Buffer.from([row.removed]));
+    buf[off++] = row.removed;
   }
-  return Buffer.concat(parts);
+
+  return buf;
 }
 
 async function getStartBlock(
@@ -201,14 +215,29 @@ async function runStream(
   let lastBlock = fromBlock;
   let lastFlushAt = Date.now();
 
-  const flush = async () => {
-    await flushBatch(batch);
-    totalLogs += batch.length;
-    batch = [];
-    lastFlushAt = Date.now();
-    console.log(
-      `[${new Date().toISOString()}] Inserted ${totalLogs.toLocaleString()} logs total, next block: ${lastBlock.toLocaleString()}`,
-    );
+  // Flush pipeline: flushes are chained sequentially but run in the background
+  // so receiver.recv() continues while a ClickHouse POST is in flight.
+  // This overlaps the HyperSync download with the ClickHouse upload, which
+  // previously caused the 5-10s idle gaps every 500k rows.
+  //
+  // MAX_QUEUED_FLUSHES caps how many batches can be in memory at once.
+  // When the limit is hit we wait for all pending flushes before scheduling
+  // another, providing backpressure if ClickHouse is slower than HyperSync.
+  const MAX_QUEUED_FLUSHES = 2;
+  let flushChain: Promise<void> = Promise.resolve();
+  let pendingFlushCount = 0;
+
+  const scheduleFlush = (rows: LogRow[], nextBlock: number) => {
+    if (rows.length === 0) return;
+    pendingFlushCount++;
+    flushChain = flushChain.then(async () => {
+      await flushBatch(rows);
+      totalLogs += rows.length;
+      pendingFlushCount--;
+      console.log(
+        `[${new Date().toISOString()}] Inserted ${totalLogs.toLocaleString()} logs total, next block: ${nextBlock.toLocaleString()}`,
+      );
+    });
   };
 
   try {
@@ -216,8 +245,9 @@ async function runStream(
       const res: QueryResponse | null = await receiver.recv();
 
       if (res === null) {
-        // Stream exhausted – we have reached the chain tip at stream start.
-        await flush();
+        // Stream exhausted – we have reached the chain tip.
+        scheduleFlush(batch, lastBlock);
+        batch = [];
         break;
       }
 
@@ -230,13 +260,24 @@ async function runStream(
 
       const elapsed = Date.now() - lastFlushAt;
       if (batch.length >= FLUSH_BATCH_SIZE || elapsed >= FLUSH_INTERVAL_MS) {
-        await flush();
+        // Backpressure: wait if we are already at the queue limit.
+        if (pendingFlushCount >= MAX_QUEUED_FLUSHES) {
+          await flushChain;
+        }
+        scheduleFlush(batch, lastBlock);
+        batch = [];
+        lastFlushAt = Date.now();
+        // Do NOT await scheduleFlush — keep calling recv() while ClickHouse
+        // processes the previous batch.
       }
     }
   } finally {
-    // Always close the stream to release server-side resources.
+    // Close the stream before draining the flush queue.
     await receiver.close();
   }
+
+  // Drain any remaining in-flight flushes.
+  await flushChain;
 
   console.log(
     `[${new Date().toISOString()}] Stream finished. Inserted ${totalLogs.toLocaleString()} logs this run, next block: ${lastBlock.toLocaleString()}`,
