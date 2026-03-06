@@ -23,17 +23,17 @@ const POLL_INTERVAL_SECS = 10;
 interface LogRow {
   chain_id: number;
   block_number: number;
-  block_hash: string;
+  block_hash: Buffer;        // FixedString(32) — raw 32 bytes
   timestamp: number;
-  transaction_hash: string;
+  transaction_hash: Buffer;  // FixedString(32) — raw 32 bytes
   transaction_index: number;
   log_index: number;
-  address: string;
-  data: string;
-  topic0: string;
-  topic1: string | null;
-  topic2: string | null;
-  topic3: string | null;
+  address: Buffer;           // FixedString(20) — raw 20 bytes
+  data: Buffer;              // String — raw ABI bytes
+  topic0: Buffer;            // FixedString(32) — raw 32 bytes
+  topic1: Buffer | null;     // Nullable(FixedString(32))
+  topic2: Buffer | null;
+  topic3: Buffer | null;
   removed: number;
 }
 
@@ -47,6 +47,13 @@ function buildTimestampMap(blocks: Block[]): Map<number, number> {
   return map;
 }
 
+// Convert a 0x-prefixed hex string to a fixed-length Buffer of `len` bytes.
+// Returns a zero-filled buffer for missing/empty values.
+function hexBuf(hex: string | null | undefined, len: number): Buffer {
+  if (!hex || hex.length < 3) return Buffer.alloc(len);
+  return Buffer.from(hex.slice(2), "hex");
+}
+
 function logToRow(
   log: Log,
   chainId: number,
@@ -55,19 +62,79 @@ function logToRow(
   return {
     chain_id: chainId,
     block_number: log.blockNumber ?? 0,
-    block_hash: log.blockHash ?? "",
+    block_hash: hexBuf(log.blockHash, 32),
     timestamp: timestamps.get(log.blockNumber ?? 0) ?? 0,
-    transaction_hash: log.transactionHash ?? "",
+    transaction_hash: hexBuf(log.transactionHash, 32),
     transaction_index: log.transactionIndex ?? 0,
     log_index: log.logIndex ?? 0,
-    address: log.address ?? "",
-    data: log.data ?? "0x",
-    topic0: log.topics[0] ?? "",
-    topic1: log.topics[1] ?? null,
-    topic2: log.topics[2] ?? null,
-    topic3: log.topics[3] ?? null,
+    address: hexBuf(log.address, 20),
+    data: hexBuf(log.data, 0),
+    topic0: hexBuf(log.topics[0], 32),
+    topic1: log.topics[1] ? hexBuf(log.topics[1], 32) : null,
+    topic2: log.topics[2] ? hexBuf(log.topics[2], 32) : null,
+    topic3: log.topics[3] ? hexBuf(log.topics[3], 32) : null,
     removed: log.removed ? 1 : 0,
   };
+}
+
+// LEB128 variable-length unsigned integer (used by ClickHouse RowBinary for String lengths).
+function varUInt(n: number): Buffer {
+  const bytes: number[] = [];
+  while (n > 0x7f) {
+    bytes.push((n & 0x7f) | 0x80);
+    n >>>= 7;
+  }
+  bytes.push(n);
+  return Buffer.from(bytes);
+}
+
+// Serialise a batch of rows into a single RowBinary buffer.
+// Column order must match the schema exactly.
+function serializeBatch(rows: LogRow[]): Buffer {
+  const parts: Buffer[] = [];
+  for (const row of rows) {
+    const u32 = Buffer.allocUnsafe(4);
+    u32.writeUInt32LE(row.chain_id);
+    parts.push(u32);
+
+    const u64 = Buffer.allocUnsafe(8);
+    u64.writeBigUInt64LE(BigInt(row.block_number));
+    parts.push(u64);
+
+    parts.push(row.block_hash);
+
+    const ts = Buffer.allocUnsafe(4);
+    ts.writeUInt32LE(row.timestamp);
+    parts.push(ts);
+
+    parts.push(row.transaction_hash);
+
+    const ti = Buffer.allocUnsafe(4);
+    ti.writeUInt32LE(row.transaction_index);
+    parts.push(ti);
+
+    const li = Buffer.allocUnsafe(4);
+    li.writeUInt32LE(row.log_index);
+    parts.push(li);
+
+    parts.push(row.address);
+
+    // String: varint(len) + bytes
+    parts.push(varUInt(row.data.length), row.data);
+
+    parts.push(row.topic0);
+
+    for (const topic of [row.topic1, row.topic2, row.topic3]) {
+      if (topic === null) {
+        parts.push(Buffer.from([1])); // null flag
+      } else {
+        parts.push(Buffer.from([0]), topic); // not-null flag + bytes
+      }
+    }
+
+    parts.push(Buffer.from([row.removed]));
+  }
+  return Buffer.concat(parts);
 }
 
 async function getStartBlock(
@@ -85,21 +152,21 @@ async function getStartBlock(
   return maxBlock;
 }
 
-async function flushBatch(
-  clickhouse: ReturnType<typeof createClient>,
-  batch: LogRow[],
-): Promise<void> {
+async function flushBatch(batch: LogRow[]): Promise<void> {
   if (batch.length === 0) return;
-  await clickhouse.insert({
-    table: "ethereum.logs",
-    values: batch,
-    format: "JSONEachRow",
-  });
+  const data = serializeBatch(batch);
+  // @clickhouse/client doesn't expose RowBinary as an insert format, so we
+  // use the HTTP interface directly. RowBinary is ~2× faster than JSON and
+  // lets us store hashes/addresses as true binary rather than hex strings.
+  const url = `${CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${CLICKHOUSE_DB}.logs FORMAT RowBinary`)}`;
+  const res = await fetch(url, { method: "POST", body: new Uint8Array(data) });
+  if (!res.ok) {
+    throw new Error(`ClickHouse insert failed [${res.status}]: ${await res.text()}`);
+  }
 }
 
 async function runStream(
   hypersync: HypersyncClient,
-  clickhouse: ReturnType<typeof createClient>,
   chainId: number,
   fromBlock: number,
 ): Promise<number> {
@@ -135,7 +202,7 @@ async function runStream(
   let lastFlushAt = Date.now();
 
   const flush = async () => {
-    await flushBatch(clickhouse, batch);
+    await flushBatch(batch);
     totalLogs += batch.length;
     batch = [];
     lastFlushAt = Date.now();
@@ -202,7 +269,7 @@ async function main(): Promise<void> {
 
   // Continuous loop: stream until chain tip, then poll for new blocks.
   while (true) {
-    startBlock = await runStream(hypersync, clickhouse, CHAIN_ID, startBlock);
+    startBlock = await runStream(hypersync, CHAIN_ID, startBlock);
     console.log(
       `Caught up to chain tip. Polling again in ${POLL_INTERVAL_SECS}s…`,
     );
