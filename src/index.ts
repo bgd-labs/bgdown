@@ -7,11 +7,9 @@ import {
   type QueryResponse,
 } from "@envio-dev/hypersync-client";
 import { Cron } from "croner";
-import PQueue from "p-queue";
 import pino from "pino";
 import { CHAIN_BY_ID } from "./chains";
 import env from "./env";
-import { getSafeAddresses } from "./safe-addresses";
 import { ensureSchema } from "./schema";
 
 const FLUSH_BATCH_SIZE = 250_000;
@@ -169,18 +167,9 @@ function serializeBatch(rows: LogRow[]): Buffer {
 async function getChainState(
   clickhouse: ReturnType<typeof createClient>,
   chainId: number,
-  ignoreAddresses: string[] = [],
 ): Promise<{ startBlock: number; totalLogs: number }> {
-  let query = `SELECT max(block_number) AS max_block, count() AS total_logs FROM ${env.CLICKHOUSE_DB}.logs WHERE chain_id = ${chainId}`;
-  if (ignoreAddresses.length > 0) {
-    const formattedAddresses = ignoreAddresses
-      .map((a) => `'${a.toLowerCase().replace("0x", "")}'`)
-      .join(", ");
-    query += ` AND lower(hex(address)) NOT IN (${formattedAddresses})`;
-  }
-
   const result = await clickhouse.query({
-    query,
+    query: `SELECT max(block_number) AS max_block, count() AS total_logs FROM ${env.CLICKHOUSE_DB}.logs WHERE chain_id = ${chainId}`,
     format: "JSONEachRow",
   });
   const rows = await result.json<{ max_block: string; total_logs: string }>();
@@ -277,11 +266,6 @@ class LogFlusher {
   }
 }
 
-type LogFilter =
-  | { type: "include"; addresses: string[] }
-  | { type: "exclude"; addresses: string[] }
-  | { type: "all" };
-
 type RunStreamConfig = {
   hypersync: HypersyncClient;
   chainId: number;
@@ -289,7 +273,6 @@ type RunStreamConfig = {
   toBlock: number;
   log: pino.Logger;
   flusher: LogFlusher;
-  filter?: LogFilter;
 };
 
 async function runStream({
@@ -299,19 +282,11 @@ async function runStream({
   toBlock,
   log,
   flusher,
-  filter,
 }: RunStreamConfig): Promise<{ nextBlock: number; totalLogs: number }> {
-  const logsSelection: { include: object; exclude?: object } =
-    filter?.type === "include"
-      ? { include: { address: filter.addresses } }
-      : filter?.type === "exclude"
-        ? { include: {}, exclude: { address: filter.addresses } }
-        : { include: {} };
-
   const query = {
     fromBlock,
     toBlock,
-    logs: [logsSelection],
+    logs: [{ include: {} }],
     fieldSelection: {
       log: [
         "Removed" as const,
@@ -410,180 +385,63 @@ try {
     apiToken: env.HYPERSYNC_API_KEY,
   });
 
-  const initialSafeAddresses = await getSafeAddresses(env.CHAIN_ID);
-  log.info({ count: initialSafeAddresses.length }, "loaded safe addresses");
+  let { startBlock, totalLogs } = await getChainState(clickhouse, env.CHAIN_ID);
+  log.info({ startBlock, totalLogs }, "connected, resuming ingestion");
 
-  let { startBlock: mainStartBlock, totalLogs } = await getChainState(
-    clickhouse,
-    env.CHAIN_ID,
-    initialSafeAddresses,
-  );
-  log.info({ mainStartBlock, totalLogs }, "connected, resuming ingestion");
-
-  const addressState = new Map<string, number>();
-  if (initialSafeAddresses.length > 0) {
-    const formattedAddresses = initialSafeAddresses
-      .map((a) => `'${a.toLowerCase().replace("0x", "")}'`)
-      .join(", ");
-    const query = `
-      SELECT lower(hex(address)) AS addr, max(block_number) AS max_block
-      FROM ${env.CLICKHOUSE_DB}.logs
-      WHERE chain_id = ${env.CHAIN_ID} AND lower(hex(address)) IN (${formattedAddresses})
-      GROUP BY address
-    `;
-    const result = await clickhouse.query({ query, format: "JSONEachRow" });
-    const rows = await result.json<{ addr: string; max_block: string }>();
-    for (const row of rows) {
-      addressState.set(`0x${row.addr}`, Number(row.max_block));
-    }
-  }
-
-  // Set any missing addresses to 0
-  for (const addr of initialSafeAddresses) {
-    const lower = addr.toLowerCase();
-    if (!addressState.has(lower)) {
-      addressState.set(lower, 0);
-    }
-  }
-
-  // Continuous loop: stream up to the reorg-safe tip, then poll for new blocks.
   const syncJob = new Cron(
     `*/${POLL_INTERVAL_SECS} * * * * *`,
     async () => {
       try {
         const tip = await hypersync.getHeight();
-        const safeBlock = Math.max(
-          mainStartBlock,
-          tip - chain.reorgSafetyBlocks,
-        );
+        const safeBlock = Math.max(startBlock, tip - chain.reorgSafetyBlocks);
 
-        const safeAddresses = await getSafeAddresses(env.CHAIN_ID);
-
-        // Check for newly added safe addresses
-        for (const addr of safeAddresses) {
-          const lower = addr.toLowerCase();
-          if (!addressState.has(lower)) {
-            log.info({ address: addr }, "discovered new safe address");
-            const query = `
-            SELECT max(block_number) AS max_block
-            FROM ${env.CLICKHOUSE_DB}.logs
-            WHERE chain_id = ${env.CHAIN_ID} AND lower(hex(address)) = '${lower.replace("0x", "")}'
-          `;
-            const result = await clickhouse.query({
-              query,
-              format: "JSONEachRow",
-            });
-            const rows = await result.json<{ max_block: string }>();
-            addressState.set(lower, Number(rows[0]?.max_block ?? 0));
-          }
-        }
-
-        // Group addresses by their start block — identical start blocks can be streamed together
-        const groups = new Map<number, string[]>();
-        for (const addr of safeAddresses) {
-          const lower = addr.toLowerCase();
-          const startBlock = addressState.get(lower) ?? 0;
-          const existing = groups.get(startBlock);
-          if (existing) {
-            existing.push(addr);
-          } else {
-            groups.set(startBlock, [addr]);
-          }
-        }
-
-        // One shared flusher for all streams this tick
-        const flusher = new LogFlusher(log, totalLogs);
-
-        // Run groups in parallel (up to 5 concurrent streams)
-        const queue = new PQueue({ concurrency: 5 });
-        const streamPromises = [...groups.entries()].map(
-          ([groupStartBlock, addrs]) =>
-            queue.add(async () => {
-              const groupSafeBlock = Math.max(
-                groupStartBlock,
-                tip - chain.reorgSafetyBlocks,
-              );
-
-              if (groupSafeBlock > groupStartBlock) {
-                log.info(
-                  {
-                    addresses: addrs,
-                    fromBlock: groupStartBlock,
-                    toBlock: groupSafeBlock,
-                    tip,
-                    reorgSafetyBlocks: chain.reorgSafetyBlocks,
-                  },
-                  "started streaming address group",
-                );
-                const res = await runStream({
-                  hypersync,
-                  chainId: env.CHAIN_ID,
-                  fromBlock: groupStartBlock,
-                  toBlock: groupSafeBlock,
-                  log: log.child({ addresses: addrs }),
-                  flusher,
-                  filter: { type: "include", addresses: addrs },
-                });
-                for (const addr of addrs) {
-                  addressState.set(addr.toLowerCase(), res.nextBlock);
-                }
-                log.info(
-                  {
-                    addresses: addrs,
-                    fromBlock: groupStartBlock,
-                    toBlock: groupSafeBlock,
-                    logsSynced: res.totalLogs,
-                  },
-                  "finished streaming address group",
-                );
-              }
-            }),
-        );
-
-        await Promise.all(streamPromises);
-
-        if (safeBlock > mainStartBlock) {
+        if (safeBlock <= startBlock) {
           log.info(
-            {
-              fromBlock: mainStartBlock,
-              toBlock: safeBlock,
-              tip,
-              reorgSafetyBlocks: chain.reorgSafetyBlocks,
-            },
-            "started streaming all logs",
+            { tip, safeBlock, reorgSafetyBlocks: chain.reorgSafetyBlocks },
+            "at reorg-safe tip, waiting for next cron tick",
           );
-          const res = await runStream({
-            hypersync,
-            chainId: env.CHAIN_ID,
-            fromBlock: mainStartBlock,
+          return;
+        }
+
+        log.info(
+          {
+            fromBlock: startBlock,
             toBlock: safeBlock,
-            log,
-            flusher,
-            filter: { type: "exclude", addresses: safeAddresses },
-          });
-          mainStartBlock = res.nextBlock;
-          log.info(
-            {
-              fromBlock: mainStartBlock,
-              toBlock: safeBlock,
-              logsSynced: res.totalLogs,
-            },
-            "finished streaming all logs",
-          );
-        }
+            tip,
+            reorgSafetyBlocks: chain.reorgSafetyBlocks,
+          },
+          "started streaming",
+        );
 
+        const flusher = new LogFlusher(log, totalLogs);
+        const res = await runStream({
+          hypersync,
+          chainId: env.CHAIN_ID,
+          fromBlock: startBlock,
+          toBlock: safeBlock,
+          log,
+          flusher,
+        });
         await flusher.waitDrain();
+
+        startBlock = res.nextBlock;
         totalLogs = flusher.totalLogs;
 
-        log.info("caught up to safe tip, waiting for next cron tick");
+        log.info(
+          {
+            fromBlock: startBlock,
+            toBlock: safeBlock,
+            logsSynced: res.totalLogs,
+          },
+          "finished streaming",
+        );
       } catch (err) {
         log.error(err, "error during sync iteration");
       }
     },
     { protect: true },
-  ); // protect: true prevents overlapping executions in croner
+  );
 
-  // Trigger immediately
   syncJob.trigger();
 } catch (err) {
   pino().error(err, "fatal error");
