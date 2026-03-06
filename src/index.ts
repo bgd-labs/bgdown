@@ -347,7 +347,7 @@ async function main(): Promise<void> {
     },
   });
 
-  await ensureSchema(clickhouse);
+  await ensureSchema();
 
   const hypersync = new HypersyncClient({
     url: chain.hypersyncUrl,

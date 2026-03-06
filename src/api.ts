@@ -18,7 +18,7 @@ const clickhouse = createClient({
   database: env.CLICKHOUSE_DB,
 });
 
-await ensureSchema(clickhouse);
+await ensureSchema();
 
 const Log = t.Object({
   address: t.String({
