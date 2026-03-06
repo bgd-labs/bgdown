@@ -10,8 +10,9 @@ import pino from "pino";
 import { CHAIN_BY_ID } from "./chains";
 import env from "./env";
 
-const FLUSH_BATCH_SIZE = 500_000;
-const FLUSH_INTERVAL_MS = 30_000;
+const FLUSH_BATCH_SIZE = 75_000;
+const FLUSH_INTERVAL_MS = 5_000;
+const MAX_CONCURRENT_FLUSHES = 8;
 
 // Seconds to wait before re-checking the chain tip after catching up.
 const POLL_INTERVAL_SECS = 10;
@@ -227,35 +228,54 @@ async function runStream(
     joinMode: JoinMode.Default,
   };
 
-  const receiver = await hypersync.stream(query, {});
+  const receiver = await hypersync.stream(query, {
+    concurrency: 20,
+  });
 
   let batch: LogRow[] = [];
   let totalLogs = initialTotalLogs;
   let lastBlock = fromBlock;
   let lastFlushAt = Date.now();
 
-  // Flush pipeline: flushes are chained sequentially but run in the background
-  // so receiver.recv() continues while a ClickHouse POST is in flight.
-  // This overlaps the HyperSync download with the ClickHouse upload, which
-  // previously caused the 5-10s idle gaps every 500k rows.
-  //
-  // MAX_QUEUED_FLUSHES caps how many batches can be in memory at once.
-  // When the limit is hit we wait for all pending flushes before scheduling
-  // another, providing backpressure if ClickHouse is slower than HyperSync.
-  const MAX_QUEUED_FLUSHES = 2;
-  let flushChain: Promise<void> = Promise.resolve();
-  let pendingFlushCount = 0;
+  // Flush pipeline: up to MAX_CONCURRENT_FLUSHES ClickHouse POSTs run in
+  // parallel so recv() is never blocked waiting for a single insert to finish.
+  // A semaphore provides backpressure when ClickHouse falls behind HyperSync.
+  let activeFlushes = 0;
+  let flushDone: (() => void) | null = null;
+
+  const waitForSlot = (): Promise<void> =>
+    new Promise((resolve) => {
+      if (activeFlushes < MAX_CONCURRENT_FLUSHES) {
+        resolve();
+      } else {
+        flushDone = resolve;
+      }
+    });
 
   const scheduleFlush = (rows: LogRow[], nextBlock: number) => {
     if (rows.length === 0) return;
-    pendingFlushCount++;
-    flushChain = flushChain.then(async () => {
-      await flushBatch(rows, log);
+    activeFlushes++;
+    flushBatch(rows, log).then(() => {
       totalLogs += rows.length;
-      pendingFlushCount--;
+      activeFlushes--;
       log.info({ totalLogs, nextBlock }, "flushed batch");
+      if (flushDone) {
+        const cb = flushDone;
+        flushDone = null;
+        cb();
+      }
     });
   };
+
+  const drainFlushes = (): Promise<void> =>
+    new Promise((resolve) => {
+      if (activeFlushes === 0) { resolve(); return; }
+      const check = () => {
+        if (activeFlushes === 0) { resolve(); return; }
+        flushDone = check;
+      };
+      flushDone = check;
+    });
 
   try {
     while (true) {
@@ -263,6 +283,7 @@ async function runStream(
 
       if (res === null) {
         // Stream exhausted – we have reached the chain tip.
+        await waitForSlot();
         scheduleFlush(batch, lastBlock);
         batch = [];
         break;
@@ -273,19 +294,20 @@ async function runStream(
       const timestamps = buildTimestampMap(res.data.blocks);
       for (const log of res.data.logs) {
         batch.push(logToRow(log, chainId, timestamps));
+        if (batch.length >= FLUSH_BATCH_SIZE) {
+          await waitForSlot();
+          scheduleFlush(batch, lastBlock);
+          batch = [];
+          lastFlushAt = Date.now();
+        }
       }
 
-      const elapsed = Date.now() - lastFlushAt;
-      if (batch.length >= FLUSH_BATCH_SIZE || elapsed >= FLUSH_INTERVAL_MS) {
-        // Backpressure: wait if we are already at the queue limit.
-        if (pendingFlushCount >= MAX_QUEUED_FLUSHES) {
-          await flushChain;
-        }
+      // Time-based flush for slow periods near chain tip.
+      if (batch.length > 0 && Date.now() - lastFlushAt >= FLUSH_INTERVAL_MS) {
+        await waitForSlot();
         scheduleFlush(batch, lastBlock);
         batch = [];
         lastFlushAt = Date.now();
-        // Do NOT await scheduleFlush — keep calling recv() while ClickHouse
-        // processes the previous batch.
       }
     }
   } finally {
@@ -294,7 +316,7 @@ async function runStream(
   }
 
   // Drain any remaining in-flight flushes.
-  await flushChain;
+  await drainFlushes();
 
   log.info({ totalLogs, nextBlock: lastBlock }, "stream finished");
 
