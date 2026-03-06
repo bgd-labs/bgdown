@@ -33,7 +33,7 @@
     rpcProviders = ['https://1.rpc.hypersync.xyz/b5c5baee-7507-451c-bcfb-f0d1e790a5ab']
     symbol = 'ETH'
     safetyDistance = 128
-    blockTimeMs = 12000
+    blockTime = 12.0
 
     [chains.mainnet.scrape]
       appsPerChunk = 0
