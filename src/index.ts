@@ -16,7 +16,6 @@ import { ensureSchema } from "./schema";
 
 const FLUSH_BATCH_SIZE = 75_000;
 const FLUSH_INTERVAL_MS = 5_000;
-const MAX_CONCURRENT_FLUSHES = 8;
 
 // Seconds to wait before re-checking the chain tip after catching up.
 const POLL_INTERVAL_SECS = 10;
@@ -215,13 +214,74 @@ async function flushBatch(batch: LogRow[], log: pino.Logger): Promise<void> {
   }
 }
 
+class LogFlusher {
+  private batch: LogRow[] = [];
+  private lastFlushAt = Date.now();
+  private flushPromise: Promise<void> | null = null;
+  private flushError: Error | null = null;
+
+  constructor(
+    private readonly log: pino.Logger,
+    public totalLogs: number = 0,
+  ) {}
+
+  async enqueue(rows: LogRow[]) {
+    if (this.flushError) throw this.flushError;
+    if (rows.length === 0) return;
+
+    this.batch.push(...rows);
+    this.totalLogs += rows.length;
+
+    const now = Date.now();
+    if (
+      this.batch.length >= FLUSH_BATCH_SIZE ||
+      now - this.lastFlushAt >= FLUSH_INTERVAL_MS
+    ) {
+      await this.flush();
+    }
+  }
+
+  private async flush() {
+    if (this.batch.length === 0) return;
+
+    // Wait for the previous flush to finish (backpressure of 1 active flush)
+    if (this.flushPromise) {
+      await this.flushPromise;
+      if (this.flushError) throw this.flushError;
+    }
+
+    const rowsToFlush = this.batch;
+    this.batch = [];
+    this.lastFlushAt = Date.now();
+
+    this.flushPromise = flushBatch(rowsToFlush, this.log)
+      .then(() => {
+        this.log.info({ totalLogs: this.totalLogs }, "flushed batch");
+        this.flushPromise = null;
+      })
+      .catch((err) => {
+        this.flushError = err;
+        this.flushPromise = null;
+      });
+  }
+
+  async waitDrain() {
+    if (this.batch.length > 0) {
+      await this.flush();
+    }
+    if (this.flushPromise) {
+      await this.flushPromise;
+    }
+    if (this.flushError) throw this.flushError;
+  }
+}
 async function runStream(
   hypersync: HypersyncClient,
   chainId: number,
   fromBlock: number,
   toBlock: number,
-  initialTotalLogs: number,
   log: pino.Logger,
+  flusher: LogFlusher,
   addresses?: string[],
 ): Promise<{ nextBlock: number; totalLogs: number }> {
   const query = {
@@ -253,56 +313,8 @@ async function runStream(
     concurrency: 20,
   });
 
-  let batch: LogRow[] = [];
-  let totalLogs = initialTotalLogs;
+  let totalLogs = 0;
   let lastBlock = fromBlock;
-  let lastFlushAt = Date.now();
-
-  // Flush pipeline: up to MAX_CONCURRENT_FLUSHES ClickHouse POSTs run in
-  // parallel so recv() is never blocked waiting for a single insert to finish.
-  // A semaphore provides backpressure when ClickHouse falls behind HyperSync.
-  let activeFlushes = 0;
-  let flushDone: (() => void) | null = null;
-
-  const waitForSlot = (): Promise<void> =>
-    new Promise((resolve) => {
-      if (activeFlushes < MAX_CONCURRENT_FLUSHES) {
-        resolve();
-      } else {
-        flushDone = resolve;
-      }
-    });
-
-  const scheduleFlush = (rows: LogRow[], nextBlock: number) => {
-    if (rows.length === 0) return;
-    activeFlushes++;
-    flushBatch(rows, log).then(() => {
-      totalLogs += rows.length;
-      activeFlushes--;
-      log.info({ totalLogs, nextBlock }, "flushed batch");
-      if (flushDone) {
-        const cb = flushDone;
-        flushDone = null;
-        cb();
-      }
-    });
-  };
-
-  const drainFlushes = (): Promise<void> =>
-    new Promise((resolve) => {
-      if (activeFlushes === 0) {
-        resolve();
-        return;
-      }
-      const check = () => {
-        if (activeFlushes === 0) {
-          resolve();
-          return;
-        }
-        flushDone = check;
-      };
-      flushDone = check;
-    });
 
   try {
     while (true) {
@@ -310,42 +322,27 @@ async function runStream(
 
       if (res === null) {
         // Stream exhausted – we have reached the chain tip.
-        await waitForSlot();
-        scheduleFlush(batch, lastBlock);
-        batch = [];
         break;
       }
 
       lastBlock = res.nextBlock;
 
       const timestamps = buildTimestampMap(res.data.blocks);
-      for (const log of res.data.logs) {
-        batch.push(logToRow(log, chainId, timestamps));
-        if (batch.length >= FLUSH_BATCH_SIZE) {
-          await waitForSlot();
-          scheduleFlush(batch, lastBlock);
-          batch = [];
-          lastFlushAt = Date.now();
-        }
-      }
+      const batch = res.data.logs.map((log) =>
+        logToRow(log, chainId, timestamps),
+      );
 
-      // Time-based flush for slow periods near chain tip.
-      if (batch.length > 0 && Date.now() - lastFlushAt >= FLUSH_INTERVAL_MS) {
-        await waitForSlot();
-        scheduleFlush(batch, lastBlock);
-        batch = [];
-        lastFlushAt = Date.now();
-      }
+      totalLogs += batch.length;
+      await flusher.enqueue(batch);
     }
   } finally {
-    // Close the stream before draining the flush queue.
     await receiver.close();
   }
 
-  // Drain any remaining in-flight flushes.
-  await drainFlushes();
-
-  log.info({ totalLogs, nextBlock: lastBlock }, "stream finished");
+  log.info(
+    { streamTotalLogs: totalLogs, nextBlock: lastBlock },
+    "stream finished",
+  );
 
   return { nextBlock: lastBlock, totalLogs };
 }
@@ -465,15 +462,17 @@ try {
                 },
                 "started streaming safe address individually",
               );
+              const flusher = new LogFlusher(log.child({ address: addr }));
               const res = await runStream(
                 hypersync,
                 env.CHAIN_ID,
                 addrStartBlock,
                 addrSafeBlock,
-                0, // track independently so parallel logs aren't interleaved confusingly
                 log.child({ address: addr }),
+                flusher,
                 [addr],
               );
+              await flusher.waitDrain();
               addressState.set(lower, res.nextBlock);
               log.info(
                 {
@@ -503,14 +502,16 @@ try {
             },
             "started streaming all logs",
           );
+          const flusher = new LogFlusher(log, totalLogs);
           const res = await runStream(
             hypersync,
             env.CHAIN_ID,
             mainStartBlock,
             safeBlock,
-            totalLogs,
             log,
+            flusher,
           );
+          await flusher.waitDrain();
           const logsSyncedInMain = res.totalLogs - totalLogs;
           mainStartBlock = res.nextBlock;
           totalLogs = res.totalLogs;
