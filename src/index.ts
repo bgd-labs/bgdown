@@ -187,7 +187,12 @@ async function flushBatch(batch: LogRow[], log: pino.Logger): Promise<void> {
   // use the HTTP interface directly. RowBinary is ~2× faster than JSON and
   // lets us store hashes/addresses as true binary rather than hex strings.
   const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.logs FORMAT RowBinary`)}`;
-  const res = await fetch(url, { method: "POST", body: new Uint8Array(data) });
+  const credentials = btoa(`${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`);
+  const res = await fetch(url, {
+    method: "POST",
+    body: new Uint8Array(data),
+    headers: { Authorization: `Basic ${credentials}` },
+  });
   if (!res.ok) {
     const body = await res.text();
     log.error({ status: res.status, body }, "ClickHouse insert failed");
@@ -332,8 +337,8 @@ async function main(): Promise<void> {
 
   const clickhouse = createClient({
     url: env.CLICKHOUSE_URL,
-    username: "default",
-    password: "",
+    username: env.CLICKHOUSE_USERNAME,
+    password: env.CLICKHOUSE_PASSWORD,
     database: env.CLICKHOUSE_DB,
     clickhouse_settings: {
       async_insert: 1,

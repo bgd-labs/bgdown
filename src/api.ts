@@ -12,8 +12,8 @@ const MAX_LIMIT = 50_000;
 
 const clickhouse = createClient({
   url: env.CLICKHOUSE_URL,
-  username: "default",
-  password: "",
+  username: env.CLICKHOUSE_USERNAME,
+  password: env.CLICKHOUSE_PASSWORD,
   database: env.CLICKHOUSE_DB,
 });
 
