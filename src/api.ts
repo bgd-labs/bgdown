@@ -136,6 +136,27 @@ new Elysia()
     },
   )
   .get(
+    "/:chainId/height",
+    async ({ params }) => {
+      const result = await clickhouse.query({
+        query:
+          "SELECT max(block_number) AS height FROM ethereum.logs WHERE chain_id = {chainId: UInt32}",
+        query_params: { chainId: params.chainId },
+        format: "JSONEachRow",
+      });
+      const [row] = await result.json<{ height: string }>();
+      return { height: Number(row?.height ?? 0) };
+    },
+    {
+      params: t.Object({ chainId: t.String() }),
+      response: {
+        200: t.Object({
+          height: t.Number({ description: "Last indexed block number" }),
+        }),
+      },
+    },
+  )
+  .get(
     "/:chainId/stats",
     async ({ params }) => {
       const [countResult, partsResult] = await Promise.all([
