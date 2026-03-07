@@ -1,5 +1,6 @@
 import { createClient } from "@clickhouse/client";
 import { openapi } from "@elysiajs/openapi";
+import { all } from "better-all";
 import { Elysia, t } from "elysia";
 import { logger } from "elysia-logger";
 import { rateLimit } from "elysia-rate-limit";
@@ -338,22 +339,23 @@ new Elysia()
         .get(
           "/:chainId/logs/stats",
           async ({ params }) => {
-            const [countResult, partsResult, safeBlock, head] =
-              await Promise.all([
+            const { countResult, partsResult, safeBlock, head } = await all({
+              countResult: () =>
                 clickhouse.query({
                   query:
                     "SELECT count() AS total, max(block_number) AS max_block FROM ethereum.logs WHERE chain_id = {chainId: UInt32}",
                   query_params: { chainId: params.chainId },
                   format: "JSONEachRow",
                 }),
+              partsResult: () =>
                 clickhouse.query({
                   query:
                     "SELECT formatReadableSize(sum(data_compressed_bytes)) AS compressed, round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) AS ratio FROM system.parts WHERE table = 'logs' AND active",
                   format: "JSONEachRow",
                 }),
-                getFinalizedBlock(),
-                getHeadBlock(),
-              ]);
+              safeBlock: () => getFinalizedBlock(),
+              head: () => getHeadBlock(),
+            });
 
             const [counts] = await countResult.json<{
               total: string;
@@ -431,22 +433,23 @@ new Elysia()
         .get(
           "/:chainId/blocks/stats",
           async ({ params }) => {
-            const [countResult, partsResult, safeBlock, head] =
-              await Promise.all([
+            const { countResult, partsResult, safeBlock, head } = await all({
+              countResult: () =>
                 clickhouse.query({
                   query:
                     "SELECT count() AS total, max(number) AS max_block FROM ethereum.blocks WHERE chain_id = {chainId: UInt32}",
                   query_params: { chainId: params.chainId },
                   format: "JSONEachRow",
                 }),
+              partsResult: () =>
                 clickhouse.query({
                   query:
                     "SELECT formatReadableSize(sum(data_compressed_bytes)) AS compressed, round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) AS ratio FROM system.parts WHERE table = 'blocks' AND active",
                   format: "JSONEachRow",
                 }),
-                getFinalizedBlock(),
-                getHeadBlock(),
-              ]);
+              safeBlock: () => getFinalizedBlock(),
+              head: () => getHeadBlock(),
+            });
 
             const [counts] = await countResult.json<{
               total: string;

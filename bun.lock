@@ -9,6 +9,7 @@
         "@envio-dev/hypersync-client": "^1.1.0",
         "arkenv": "0.9.3",
         "arktype": "^2.2.0",
+        "better-all": "^0.0.7",
         "croner": "^10.0.1",
         "elysia": "^1.4.27",
         "elysia-logger": "^0.5.2",
@@ -179,6 +180,8 @@
     "arktype": ["arktype@2.2.0", "", { "dependencies": { "@ark/schema": "0.56.0", "@ark/util": "0.56.0", "arkregex": "0.0.5" } }, "sha512-t54MZ7ti5BhOEvzEkgKnWvqj+UbDfWig+DHr5I34xatymPusKLS0lQpNJd8M6DzmIto2QGszHfNKoFIT8tMCZQ=="],
 
     "atomic-sleep": ["atomic-sleep@1.0.0", "", {}, "sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ=="],
+
+    "better-all": ["better-all@0.0.7", "", {}, "sha512-xgdUMWb88Qhz6RtC/PY/7QtR61K/JabCcbKhNYYuXC/IoY3c/bgYdIjVxyTHXR41KP8JQeP+6dg4zH4KOpwJzw=="],
 
     "braces": ["braces@3.0.3", "", { "dependencies": { "fill-range": "^7.1.1" } }, "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA=="],
 

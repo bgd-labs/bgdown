@@ -15,6 +15,7 @@
     "@envio-dev/hypersync-client": "^1.1.0",
     "arkenv": "0.9.3",
     "arktype": "^2.2.0",
+    "better-all": "^0.0.7",
     "croner": "^10.0.1",
     "elysia": "^1.4.27",
     "elysia-logger": "^0.5.2",

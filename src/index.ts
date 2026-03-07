@@ -7,6 +7,7 @@ import {
   type Query,
   type QueryResponse,
 } from "@envio-dev/hypersync-client";
+import { all } from "better-all";
 import { Cron } from "croner";
 import pino from "pino";
 import { CHAIN_BY_ID, getFinalizedBlock } from "./chains";
@@ -751,14 +752,16 @@ try {
         await logFlusher.waitDrain();
         await blockFlusher.waitDrain();
 
-        await Promise.all([
-          clickhouse.command({
-            query: `OPTIMIZE TABLE ${env.CLICKHOUSE_DB}.logs FINAL`,
-          }),
-          clickhouse.command({
-            query: `OPTIMIZE TABLE ${env.CLICKHOUSE_DB}.blocks FINAL`,
-          }),
-        ]);
+        await all({
+          logs: () =>
+            clickhouse.command({
+              query: `OPTIMIZE TABLE ${env.CLICKHOUSE_DB}.logs FINAL`,
+            }),
+          blocks: () =>
+            clickhouse.command({
+              query: `OPTIMIZE TABLE ${env.CLICKHOUSE_DB}.blocks FINAL`,
+            }),
+        });
 
         startBlock = res.nextBlock;
         totalLogs = logFlusher.totalRows;
