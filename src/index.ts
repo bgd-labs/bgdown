@@ -417,8 +417,6 @@ async function flushBlockBatch(
   }
 }
 
-const REORG_SAFETY_FALLBACK = 64;
-
 async function getChainState(
   clickhouse: ReturnType<typeof createClient>,
   chainId: number,
@@ -707,7 +705,7 @@ try {
 
     // HyperSync only advances its height over data that is already indexed
     // (finalized-ish), so we use it directly as our safe ceiling.
-    const safeBlock = event.height - REORG_SAFETY_FALLBACK;
+    const safeBlock = event.height - chain.reorgSafetyFallback;
 
     if (safeBlock <= startBlock) {
       log.info(
