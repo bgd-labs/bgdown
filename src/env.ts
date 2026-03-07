@@ -5,7 +5,6 @@ const raw = arkenv({
   CLICKHOUSE_URL: "string.url = 'http://localhost:8123'",
   CLICKHOUSE_DB: "string = 'ethereum'",
   HYPERSYNC_API_KEY: "string",
-  RPC_URL: "string.url?",
   LOG_LEVEL: "'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' = 'info'",
   PORT: "number.port = 3000",
   CHAIN_ID: "number = 1",

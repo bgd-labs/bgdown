@@ -70,7 +70,7 @@ export function getViemForChain(chainId: number) {
     const chain = CHAINS.find((c) => c.id === chainId);
     viemCache.set(
       chainId,
-      createPublicClient({ chain, transport: http(env.RPC_URL) }),
+      createPublicClient({ chain, transport: http() }),
     );
   }
   return viemCache.get(chainId) as ReturnType<typeof createPublicClient>;
