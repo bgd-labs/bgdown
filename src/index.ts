@@ -10,7 +10,7 @@ import {
 import { all } from "better-all";
 import { Cron } from "croner";
 import pino from "pino";
-import { CHAIN_BY_ID, getFinalizedBlock } from "./chains";
+import { CHAIN_BY_ID, getFinalizedBlock, getHeadBlock } from "./chains";
 import env from "./env";
 import { ensureSchema } from "./schema";
 

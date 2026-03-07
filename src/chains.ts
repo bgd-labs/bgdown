@@ -1,3 +1,4 @@
+import { HypersyncClient } from "@envio-dev/hypersync-client";
 import { type Chain, createPublicClient, http } from "viem";
 import {
   arbitrum,
@@ -58,22 +59,47 @@ export const CHAIN_BY_ID: ReadonlyMap<number, ChainConfig> = new Map(
   CHAINS.map((c) => [c.id, toChainConfig(c)]),
 );
 
-const getViem = () => {
-  const chain = CHAINS.find((c) => c.id === env.CHAIN_ID);
-  return createPublicClient({
-    chain,
-    transport: http(env.RPC_URL),
-  });
-};
+// ── Per-chain client caches ───────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const viemCache = new Map<number, any>();
+const hypersyncCache = new Map<number, HypersyncClient>();
+
+export function getViemForChain(chainId: number) {
+  if (!viemCache.has(chainId)) {
+    const chain = CHAINS.find((c) => c.id === chainId);
+    viemCache.set(
+      chainId,
+      createPublicClient({ chain, transport: http(env.RPC_URL) }),
+    );
+  }
+  return viemCache.get(chainId) as ReturnType<typeof createPublicClient>;
+}
+
+export function getHypersyncForChain(chainId: number) {
+  if (!hypersyncCache.has(chainId)) {
+    const config = CHAIN_BY_ID.get(chainId);
+    hypersyncCache.set(
+      chainId,
+      new HypersyncClient({
+        url: config?.hypersyncUrl ?? `https://${chainId}.hypersync.xyz`,
+        apiToken: env.HYPERSYNC_API_KEY,
+      }),
+    );
+  }
+  return hypersyncCache.get(chainId)!;
+}
+
+// ── Convenience helpers (use CHAIN_ID from env) ───────────────────────────────
+
+const getViem = () => getViemForChain(env.CHAIN_ID);
 
 export async function getFinalizedBlock(): Promise<number> {
-  const client = getViem();
-  const block = await client.getBlock({ blockTag: "finalized" });
+  const block = await getViem().getBlock({ blockTag: "finalized" });
   return Number(block.number);
 }
 
 export async function getHeadBlock(): Promise<number> {
-  const client = getViem();
-  const block = await client.getBlock({ blockTag: "latest" });
+  const block = await getViem().getBlock({ blockTag: "latest" });
   return Number(block.number);
 }
