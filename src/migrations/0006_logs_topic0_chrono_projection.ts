@@ -11,6 +11,9 @@ export async function up(client: ClickHouseClient): Promise<void> {
         ORDER BY (chain_id, topic0, block_number, log_index)
       )
     `,
+    clickhouse_settings: {
+      deduplicate_merge_projection_mode: "rebuild",
+    },
   });
 
   await client.command({
