@@ -16,12 +16,6 @@ const clickhouse = createClient({
   username: env.CLICKHOUSE_USERNAME,
   password: env.CLICKHOUSE_PASSWORD,
   database: env.CLICKHOUSE_DB,
-  clickhouse_settings: {
-    // Use merge-sort join so the tx_hashes/blocks build side is streamed
-    // rather than fully materialised into a hash table. Both join tables are
-    // already sorted by (chain_id, id), which makes partial_merge efficient.
-    join_algorithm: "partial_merge",
-  },
 });
 
 const Log = t.Object({
@@ -91,9 +85,8 @@ const Block = t.Object({
 
 interface LogRow {
   block_number: string;
-  block_hash_hex: string;
   timestamp: string;
-  transaction_hash_hex: string;
+  transaction_id: string; // UInt64 as decimal string
   transaction_index: string;
   log_index: string;
   address_hex: string;
@@ -150,24 +143,70 @@ function decodeCursor(cursor: string): {
   return { blockNumber: blockNumber ?? 0, logIndex: logIndex ?? 0 };
 }
 
-function rowToLog(row: LogRow): typeof Log.static {
-  const topics = [
-    row.topic0_hex,
-    row.topic1_hex,
-    row.topic2_hex,
-    row.topic3_hex,
-  ].filter((t): t is string => t !== null && t !== "");
-  return {
-    address: row.address_hex,
-    blockHash: row.block_hash_hex,
-    blockNumber: Number(row.block_number),
-    timestamp: Number(row.timestamp),
-    data: row.data_hex,
-    logIndex: Number(row.log_index),
-    topics,
-    transactionHash: row.transaction_hash_hex,
-    transactionIndex: Number(row.transaction_index),
-  };
+// Fetch block_hash for a set of block numbers in one primary-key lookup.
+async function fetchBlockHashes(
+  chainId: string,
+  blockNumbers: string[],
+): Promise<Map<string, string>> {
+  if (blockNumbers.length === 0) return new Map();
+  const result = await clickhouse.query({
+    query: `SELECT toString(number) AS num, concat('0x', lower(hex(hash))) AS hash_hex
+            FROM ethereum.blocks
+            WHERE chain_id = {chainId: UInt32} AND number IN ({nums: Array(UInt64)})`,
+    query_params: { chainId, nums: blockNumbers },
+    format: "JSONEachRow",
+  });
+  const rows = await result.json<{ num: string; hash_hex: string }>();
+  return new Map(rows.map((r) => [r.num, r.hash_hex]));
+}
+
+// Fetch transaction_hash for a set of transaction_ids in one primary-key lookup.
+async function fetchTxHashes(
+  chainId: string,
+  txIds: string[],
+): Promise<Map<string, string>> {
+  if (txIds.length === 0) return new Map();
+  const result = await clickhouse.query({
+    query: `SELECT toString(transaction_id) AS tid, concat('0x', lower(hex(transaction_hash))) AS hash_hex
+            FROM ethereum.transaction_hashes
+            WHERE chain_id = {chainId: UInt32} AND transaction_id IN ({tids: Array(UInt64)})`,
+    query_params: { chainId, tids: txIds },
+    format: "JSONEachRow",
+  });
+  const rows = await result.json<{ tid: string; hash_hex: string }>();
+  return new Map(rows.map((r) => [r.tid, r.hash_hex]));
+}
+
+// Enrich raw log rows with block_hash and transaction_hash via parallel lookups.
+async function enrichLogs(
+  chainId: string,
+  rows: LogRow[],
+): Promise<(typeof Log.static)[]> {
+  const blockNums = [...new Set(rows.map((r) => r.block_number))];
+  const txIds = [...new Set(rows.map((r) => r.transaction_id))];
+  const [blockHashes, txHashes] = await Promise.all([
+    fetchBlockHashes(chainId, blockNums),
+    fetchTxHashes(chainId, txIds),
+  ]);
+  return rows.map((row) => {
+    const topics = [
+      row.topic0_hex,
+      row.topic1_hex,
+      row.topic2_hex,
+      row.topic3_hex,
+    ].filter((t): t is string => t !== null && t !== "");
+    return {
+      address: row.address_hex,
+      blockHash: blockHashes.get(row.block_number) ?? "0x",
+      blockNumber: Number(row.block_number),
+      timestamp: Number(row.timestamp),
+      data: row.data_hex,
+      logIndex: Number(row.log_index),
+      topics,
+      transactionHash: txHashes.get(row.transaction_id) ?? "0x",
+      transactionIndex: Number(row.transaction_index),
+    };
+  });
 }
 
 function rowToBlock(row: BlockRow): typeof Block.static {
@@ -242,28 +281,20 @@ const BLOCK_SELECT = `
   if(isNull(send_root), NULL, concat('0x', lower(hex(assumeNotNull(send_root))))) AS send_root_hex
 `;
 
-// transaction_hash lives in transaction_hashes; block_hash lives in blocks.
-const LOG_FROM = `
-  ethereum.logs AS l
-  JOIN ethereum.transaction_hashes AS th
-    ON l.chain_id = th.chain_id AND l.transaction_id = th.transaction_id
-  JOIN ethereum.blocks AS bl
-    ON l.chain_id = bl.chain_id AND l.block_number = bl.number
-`;
-
+// block_hash and transaction_hash are fetched separately via enrichLogs()
+// to avoid JOIN over 100M+ row lookup tables.
 const LOG_SELECT = `
-  l.block_number,
-  concat('0x', lower(hex(bl.hash)))                                             AS block_hash_hex,
-  l.timestamp                                                                   AS timestamp,
-  concat('0x', lower(hex(th.transaction_hash)))                                 AS transaction_hash_hex,
-  l.transaction_index,
-  l.log_index,
-  concat('0x', lower(hex(l.address)))                                           AS address_hex,
-  concat('0x', lower(hex(l.data)))                                              AS data_hex,
-  concat('0x', lower(hex(l.topic0)))                                            AS topic0_hex,
-  if(isNull(l.topic1), NULL, concat('0x', lower(hex(assumeNotNull(l.topic1))))) AS topic1_hex,
-  if(isNull(l.topic2), NULL, concat('0x', lower(hex(assumeNotNull(l.topic2))))) AS topic2_hex,
-  if(isNull(l.topic3), NULL, concat('0x', lower(hex(assumeNotNull(l.topic3))))) AS topic3_hex
+  block_number,
+  timestamp,
+  transaction_id,
+  transaction_index,
+  log_index,
+  concat('0x', lower(hex(address)))                                           AS address_hex,
+  concat('0x', lower(hex(data)))                                              AS data_hex,
+  concat('0x', lower(hex(topic0)))                                            AS topic0_hex,
+  if(isNull(topic1), NULL, concat('0x', lower(hex(assumeNotNull(topic1))))) AS topic1_hex,
+  if(isNull(topic2), NULL, concat('0x', lower(hex(assumeNotNull(topic2))))) AS topic2_hex,
+  if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex
 `;
 
 new Elysia()
@@ -504,22 +535,22 @@ new Elysia()
                 const emitterHex = query.emitter?.toLowerCase().slice(2);
 
                 const cursorClause = cursor
-                  ? "AND (l.block_number, l.log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
+                  ? "AND (block_number, log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
                   : "";
                 const addressClause = emitterHex
-                  ? "AND l.address = unhex({emitterHex: String})"
+                  ? "AND address = unhex({emitterHex: String})"
                   : "";
 
                 const result = await clickhouse.query({
                   query: `
                     SELECT ${LOG_SELECT}
-                    FROM ${LOG_FROM}
+                    FROM ethereum.logs
                     WHERE
-                      l.chain_id = {chainId: UInt32}
-                      AND l.topic0 = unhex({topicHex: String})
+                      chain_id = {chainId: UInt32}
+                      AND topic0 = unhex({topicHex: String})
                       ${cursorClause}
                       ${addressClause}
-                    ORDER BY l.block_number, l.log_index
+                    ORDER BY block_number, log_index
                     LIMIT {limit: UInt32}
                   `,
                   query_params: {
@@ -538,7 +569,7 @@ new Elysia()
                 });
 
                 const rows = await result.json<LogRow>();
-                const logs = rows.map(rowToLog);
+                const logs = await enrichLogs(params.chainId, rows);
 
                 const lastRow = rows.at(-1);
                 const nextCursor =
@@ -601,10 +632,10 @@ new Elysia()
                 const result = await clickhouse.query({
                   query: `
                     SELECT ${LOG_SELECT}
-                    FROM ${LOG_FROM}
-                    WHERE l.chain_id = {chainId: UInt32}
-                      AND l.block_number = {blockNumber: UInt64}
-                      AND l.log_index = {logIndex: UInt32}
+                    FROM ethereum.logs
+                    WHERE chain_id = {chainId: UInt32}
+                      AND block_number = {blockNumber: UInt64}
+                      AND log_index = {logIndex: UInt32}
                     LIMIT 1
                   `,
                   query_params: {
@@ -618,7 +649,8 @@ new Elysia()
                 const rows = await result.json<LogRow>();
                 if (rows.length === 0) return status(404, "Log not found");
 
-                return rowToLog(rows[0]);
+                const [log] = await enrichLogs(params.chainId, rows);
+                return log;
               },
               {
                 params: t.Object({
