@@ -685,6 +685,103 @@ async function runStream({
   return { nextBlock: lastBlock, totalLogs };
 }
 
+type RunBlockBackfillConfig = {
+  hypersync: HypersyncClient;
+  chainId: number;
+  fromBlock: number;
+  toBlock: number;
+  log: pino.Logger;
+  blockFlusher: Flusher<BlockRow>;
+};
+
+async function runBlockBackfill({
+  hypersync,
+  chainId,
+  fromBlock,
+  toBlock,
+  log,
+  blockFlusher,
+}: RunBlockBackfillConfig): Promise<{ nextBlock: number }> {
+  const query = {
+    fromBlock,
+    toBlock,
+    includeAllBlocks: true,
+    logs: [],
+    fieldSelection: {
+      block: [
+        "Number",
+        "Hash",
+        "ParentHash",
+        "Nonce",
+        "Sha3Uncles",
+        "LogsBloom",
+        "TransactionsRoot",
+        "StateRoot",
+        "ReceiptsRoot",
+        "Miner",
+        "Difficulty",
+        "TotalDifficulty",
+        "ExtraData",
+        "Size",
+        "GasLimit",
+        "GasUsed",
+        "Timestamp",
+        "Uncles",
+        "BaseFeePerGas",
+        "BlobGasUsed",
+        "ExcessBlobGas",
+        "ParentBeaconBlockRoot",
+        "WithdrawalsRoot",
+        "Withdrawals",
+        "L1BlockNumber",
+        "SendCount",
+        "SendRoot",
+        "MixHash",
+      ],
+    },
+    joinMode: JoinMode.Default,
+  } satisfies Query;
+
+  const receiver = await hypersync.stream(query, {
+    concurrency: 20,
+  });
+
+  let lastBlock = fromBlock;
+  const totalBlocks = toBlock - fromBlock;
+  let lastProgressLog = Date.now();
+
+  try {
+    while (true) {
+      const res: QueryResponse | null = await receiver.recv();
+      if (res === null) break;
+
+      lastBlock = res.nextBlock;
+
+      const now = Date.now();
+      if (now - lastProgressLog >= 10_000) {
+        const blocksProcessed = lastBlock - fromBlock;
+        const pct =
+          totalBlocks > 0
+            ? ((blocksProcessed / totalBlocks) * 100).toFixed(1)
+            : "100.0";
+        log.info(
+          { nextBlock: lastBlock, toBlock, pct: `${pct}%` },
+          "backfill progress",
+        );
+        lastProgressLog = now;
+      }
+
+      const blockBatch = res.data.blocks.map((b) => blockToRow(b, chainId));
+      await blockFlusher.enqueue(blockBatch);
+    }
+  } finally {
+    await receiver.close();
+  }
+
+  log.info({ nextBlock: lastBlock }, "backfill stream finished");
+  return { nextBlock: lastBlock };
+}
+
 try {
   const chain = CHAIN_BY_ID.get(env.CHAIN_ID);
   if (!chain)
@@ -712,6 +809,34 @@ try {
 
   let { startBlock, totalLogs } = await getChainState(clickhouse, env.CHAIN_ID);
   log.info({ startBlock, totalLogs }, "connected, resuming ingestion");
+
+  // ── Backfill mode ─────────────────────────────────────────────────────────
+  if (env.BACKFILL_BLOCKS_TO != null) {
+    const from = env.BACKFILL_BLOCKS_FROM;
+    const to = env.BACKFILL_BLOCKS_TO;
+    log.info({ from, to }, "backfill mode: streaming blocks only");
+
+    const blockFlusher = new Flusher<BlockRow>(
+      log,
+      flushBlockBatch,
+      "blocks",
+      BLOCK_FLUSH_BATCH_SIZE,
+    );
+    await runBlockBackfill({
+      hypersync,
+      chainId: env.CHAIN_ID,
+      fromBlock: from,
+      toBlock: to,
+      log,
+      blockFlusher,
+    });
+    await blockFlusher.waitDrain();
+
+    log.info({ from, to }, "backfill complete");
+    process.exit(0);
+  }
+
+  // ── Normal sync ───────────────────────────────────────────────────────────
 
   const syncJob = new Cron(
     `*/${POLL_INTERVAL_SECS} * * * * *`,

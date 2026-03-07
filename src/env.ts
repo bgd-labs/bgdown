@@ -9,6 +9,8 @@ const raw = arkenv({
   LOG_LEVEL: "'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' = 'info'",
   PORT: "number.port = 3000",
   CHAIN_ID: "number = 1",
+  BACKFILL_BLOCKS_TO: "number?",
+  BACKFILL_BLOCKS_FROM: "number = 0",
 });
 
 // Normalise the ClickHouse URL: fix scheme, remap native TCP port, then extract
