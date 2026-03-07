@@ -4,7 +4,7 @@ import { Elysia, t } from "elysia";
 import { logger } from "elysia-logger";
 import { rateLimit } from "elysia-rate-limit";
 import { tokenSet } from "./auth";
-import { CHAIN_BY_ID } from "./chains";
+import { CHAIN_BY_ID, getFinalizedBlock, getHeadBlock } from "./chains";
 import env from "./env";
 
 const DEFAULT_LIMIT = 1_000;
@@ -338,19 +338,22 @@ new Elysia()
         .get(
           "/:chainId/logs/stats",
           async ({ params }) => {
-            const [countResult, partsResult] = await Promise.all([
-              clickhouse.query({
-                query:
-                  "SELECT count() AS total, max(block_number) AS max_block FROM ethereum.logs WHERE chain_id = {chainId: UInt32}",
-                query_params: { chainId: params.chainId },
-                format: "JSONEachRow",
-              }),
-              clickhouse.query({
-                query:
-                  "SELECT formatReadableSize(sum(data_compressed_bytes)) AS compressed, round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) AS ratio FROM system.parts WHERE table = 'logs' AND active",
-                format: "JSONEachRow",
-              }),
-            ]);
+            const [countResult, partsResult, safeBlock, head] =
+              await Promise.all([
+                clickhouse.query({
+                  query:
+                    "SELECT count() AS total, max(block_number) AS max_block FROM ethereum.logs WHERE chain_id = {chainId: UInt32}",
+                  query_params: { chainId: params.chainId },
+                  format: "JSONEachRow",
+                }),
+                clickhouse.query({
+                  query:
+                    "SELECT formatReadableSize(sum(data_compressed_bytes)) AS compressed, round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) AS ratio FROM system.parts WHERE table = 'logs' AND active",
+                  format: "JSONEachRow",
+                }),
+                getFinalizedBlock(),
+                getHeadBlock(),
+              ]);
 
             const [counts] = await countResult.json<{
               total: string;
@@ -361,9 +364,13 @@ new Elysia()
               ratio: number;
             }>();
 
+            const maxIndexedBlock = Number(counts?.max_block ?? 0);
             return {
               total: Number(counts?.total ?? 0),
-              maxIndexedBlock: Number(counts?.max_block ?? 0),
+              maxIndexedBlock,
+              safeBlock,
+              head,
+              lag: safeBlock - maxIndexedBlock,
               compressedSize: parts?.compressed ?? "0 B",
               compressionRatio: parts?.ratio ?? 0,
             };
@@ -377,6 +384,16 @@ new Elysia()
                 }),
                 maxIndexedBlock: t.Number({
                   description: "Highest block number with logs indexed",
+                }),
+                safeBlock: t.Number({
+                  description: "Current finalized block on chain",
+                }),
+                head: t.Number({
+                  description: "Current latest block on chain",
+                }),
+                lag: t.Number({
+                  description:
+                    "Number of blocks behind the finalized block (safeBlock - maxIndexedBlock)",
                 }),
                 compressedSize: t.String({
                   description: "Compressed size of the logs table on disk",
@@ -414,19 +431,22 @@ new Elysia()
         .get(
           "/:chainId/blocks/stats",
           async ({ params }) => {
-            const [countResult, partsResult] = await Promise.all([
-              clickhouse.query({
-                query:
-                  "SELECT count() AS total, max(number) AS max_block FROM ethereum.blocks WHERE chain_id = {chainId: UInt32}",
-                query_params: { chainId: params.chainId },
-                format: "JSONEachRow",
-              }),
-              clickhouse.query({
-                query:
-                  "SELECT formatReadableSize(sum(data_compressed_bytes)) AS compressed, round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) AS ratio FROM system.parts WHERE table = 'blocks' AND active",
-                format: "JSONEachRow",
-              }),
-            ]);
+            const [countResult, partsResult, safeBlock, head] =
+              await Promise.all([
+                clickhouse.query({
+                  query:
+                    "SELECT count() AS total, max(number) AS max_block FROM ethereum.blocks WHERE chain_id = {chainId: UInt32}",
+                  query_params: { chainId: params.chainId },
+                  format: "JSONEachRow",
+                }),
+                clickhouse.query({
+                  query:
+                    "SELECT formatReadableSize(sum(data_compressed_bytes)) AS compressed, round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) AS ratio FROM system.parts WHERE table = 'blocks' AND active",
+                  format: "JSONEachRow",
+                }),
+                getFinalizedBlock(),
+                getHeadBlock(),
+              ]);
 
             const [counts] = await countResult.json<{
               total: string;
@@ -437,9 +457,13 @@ new Elysia()
               ratio: number;
             }>();
 
+            const maxIndexedBlock = Number(counts?.max_block ?? 0);
             return {
               total: Number(counts?.total ?? 0),
-              maxIndexedBlock: Number(counts?.max_block ?? 0),
+              maxIndexedBlock,
+              safeBlock,
+              head,
+              lag: safeBlock - maxIndexedBlock,
               compressedSize: parts?.compressed ?? "0 B",
               compressionRatio: parts?.ratio ?? 0,
             };
@@ -453,6 +477,16 @@ new Elysia()
                 }),
                 maxIndexedBlock: t.Number({
                   description: "Highest block number indexed",
+                }),
+                safeBlock: t.Number({
+                  description: "Current finalized block on chain",
+                }),
+                head: t.Number({
+                  description: "Current latest block on chain",
+                }),
+                lag: t.Number({
+                  description:
+                    "Number of blocks behind the finalized block (safeBlock - maxIndexedBlock)",
                 }),
                 compressedSize: t.String({
                   description: "Compressed size of the blocks table on disk",

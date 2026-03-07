@@ -9,7 +9,7 @@ import {
 } from "@envio-dev/hypersync-client";
 import { Cron } from "croner";
 import pino from "pino";
-import { CHAIN_BY_ID, getViem } from "./chains";
+import { CHAIN_BY_ID, getFinalizedBlock } from "./chains";
 import env from "./env";
 import { ensureSchema } from "./schema";
 
@@ -423,14 +423,12 @@ async function flushBlockBatch(
 
 const REORG_SAFETY_FALLBACK = 64;
 
-async function getFinalizedBlock(
+async function getSafeBlock(
   hypersync: HypersyncClient,
   log: pino.Logger,
 ): Promise<number> {
   try {
-    const client = getViem();
-    const block = await client.getBlock({ blockTag: "finalized" });
-    return Number(block.number);
+    return await getFinalizedBlock();
   } catch (err) {
     const tip = await hypersync.getHeight();
     const fallback = tip - REORG_SAFETY_FALLBACK;
@@ -710,7 +708,7 @@ try {
     `*/${POLL_INTERVAL_SECS} * * * * *`,
     async () => {
       try {
-        const safeBlock = await getFinalizedBlock(hypersync, log);
+        const safeBlock = await getSafeBlock(hypersync, log);
 
         if (safeBlock <= startBlock) {
           log.info(

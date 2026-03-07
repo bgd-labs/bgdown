@@ -58,10 +58,22 @@ export const CHAIN_BY_ID: ReadonlyMap<number, ChainConfig> = new Map(
   CHAINS.map((c) => [c.id, toChainConfig(c)]),
 );
 
-export const getViem = () => {
+const getViem = () => {
   const chain = CHAINS.find((c) => c.id === env.CHAIN_ID);
   return createPublicClient({
     chain,
     transport: http(env.RPC_URL),
   });
 };
+
+export async function getFinalizedBlock(): Promise<number> {
+  const client = getViem();
+  const block = await client.getBlock({ blockTag: "finalized" });
+  return Number(block.number);
+}
+
+export async function getHeadBlock(): Promise<number> {
+  const client = getViem();
+  const block = await client.getBlock({ blockTag: "latest" });
+  return Number(block.number);
+}
