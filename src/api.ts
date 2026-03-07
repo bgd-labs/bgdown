@@ -303,7 +303,7 @@ new Elysia()
       return { height: Number(row?.height ?? 0) };
     },
     {
-      params: t.Object({ chainId: t.String() }),
+      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       response: {
         200: t.Object({
           height: t.Number({ description: "Last indexed block number" }),
@@ -354,7 +354,7 @@ new Elysia()
       };
     },
     {
-      params: t.Object({ chainId: t.String() }),
+      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       response: {
         200: t.Object({
           totalLogs: t.Number({ description: "Total number of indexed logs" }),
@@ -451,28 +451,37 @@ new Elysia()
       beforeHandle: ({ query, status }) => {
         if (!tokenSet.has(query.token)) return status(401, "Unauthorized");
       },
-      params: t.Object({ chainId: t.String() }),
+      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       query: t.Object({
-        token: t.String({ description: "API token" }),
+        token: t.String({
+          description: "API token",
+          examples: ["my-api-token"],
+        }),
         topic: t.String({
           description:
             "Event signature hash (topic0) — required, maps directly to the primary index",
+          examples: [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          ],
         }),
         emitter: t.Optional(
           t.String({
             description:
               "Contract address; combined with topic for a full primary-key lookup",
+            examples: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
           }),
         ),
         cursor: t.Optional(
           t.String({
             description:
               "Opaque pagination cursor from the previous response's nextCursor",
+            examples: ["MTAwMDAwMDA6MA"],
           }),
         ),
         limit: t.Optional(
           t.Numeric({
             description: `Number of logs to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
+            examples: [100],
           }),
         ),
       }),
@@ -527,17 +536,19 @@ new Elysia()
       return { blocks, nextCursor };
     },
     {
-      params: t.Object({ chainId: t.String() }),
+      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       query: t.Object({
         cursor: t.Optional(
           t.String({
             description:
               "Opaque pagination cursor from the previous response's nextCursor",
+            examples: ["MTAwMDA"],
           }),
         ),
         limit: t.Optional(
           t.Numeric({
             description: `Number of blocks to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
+            examples: [100],
           }),
         ),
       }),
@@ -579,11 +590,60 @@ new Elysia()
     },
     {
       params: t.Object({
-        chainId: t.String(),
-        blockNumber: t.String(),
+        chainId: t.String({ examples: ["1"] }),
+        blockNumber: t.String({ examples: ["17000000"] }),
       }),
       response: {
         200: Block,
+        404: t.String(),
+      },
+    },
+  )
+  .get(
+    "/:chainId/log/:blockNumber/:logIndex",
+    async ({ params, status }) => {
+      const result = await clickhouse.query({
+        query: `
+          SELECT
+            block_number,
+            concat('0x', lower(hex(block_hash)))        AS block_hash_hex,
+            timestamp,
+            concat('0x', lower(hex(transaction_hash))) AS transaction_hash_hex,
+            transaction_index,
+            log_index,
+            concat('0x', lower(hex(address)))           AS address_hex,
+            concat('0x', lower(hex(data)))              AS data_hex,
+            concat('0x', lower(hex(topic0)))            AS topic0_hex,
+            if(isNull(topic1), NULL, concat('0x', lower(hex(assumeNotNull(topic1))))) AS topic1_hex,
+            if(isNull(topic2), NULL, concat('0x', lower(hex(assumeNotNull(topic2))))) AS topic2_hex,
+            if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex
+          FROM ethereum.logs
+          WHERE chain_id = {chainId: UInt32}
+            AND block_number = {blockNumber: UInt64}
+            AND log_index = {logIndex: UInt32}
+          LIMIT 1
+        `,
+        query_params: {
+          chainId: params.chainId,
+          blockNumber: params.blockNumber,
+          logIndex: params.logIndex,
+        },
+        format: "JSONEachRow",
+      });
+
+      const rows = await result.json<LogRow>();
+      if (rows.length === 0) return status(404, "Log not found");
+
+      return rowToLog(rows[0]);
+    },
+    {
+      params: t.Object({
+        chainId: t.String({ examples: ["1"] }),
+        blockNumber: t.String({ examples: ["17000000"] }),
+        logIndex: t.String({ examples: ["0"] }),
+      }),
+      response: {
+        200: Log,
         404: t.String(),
       },
     },
