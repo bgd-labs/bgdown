@@ -16,6 +16,12 @@ const clickhouse = createClient({
   username: env.CLICKHOUSE_USERNAME,
   password: env.CLICKHOUSE_PASSWORD,
   database: env.CLICKHOUSE_DB,
+  clickhouse_settings: {
+    // Use merge-sort join so the tx_hashes/blocks build side is streamed
+    // rather than fully materialised into a hash table. Both join tables are
+    // already sorted by (chain_id, id), which makes partial_merge efficient.
+    join_algorithm: "partial_merge",
+  },
 });
 
 const Log = t.Object({
@@ -236,19 +242,28 @@ const BLOCK_SELECT = `
   if(isNull(send_root), NULL, concat('0x', lower(hex(assumeNotNull(send_root))))) AS send_root_hex
 `;
 
+// transaction_hash lives in transaction_hashes; block_hash lives in blocks.
+const LOG_FROM = `
+  ethereum.logs AS l
+  JOIN ethereum.transaction_hashes AS th
+    ON l.chain_id = th.chain_id AND l.transaction_id = th.transaction_id
+  JOIN ethereum.blocks AS bl
+    ON l.chain_id = bl.chain_id AND l.block_number = bl.number
+`;
+
 const LOG_SELECT = `
-  block_number,
-  concat('0x', lower(hex(block_hash)))        AS block_hash_hex,
-  timestamp,
-  concat('0x', lower(hex(transaction_hash))) AS transaction_hash_hex,
-  transaction_index,
-  log_index,
-  concat('0x', lower(hex(address)))           AS address_hex,
-  concat('0x', lower(hex(data)))              AS data_hex,
-  concat('0x', lower(hex(topic0)))            AS topic0_hex,
-  if(isNull(topic1), NULL, concat('0x', lower(hex(assumeNotNull(topic1))))) AS topic1_hex,
-  if(isNull(topic2), NULL, concat('0x', lower(hex(assumeNotNull(topic2))))) AS topic2_hex,
-  if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex
+  l.block_number,
+  concat('0x', lower(hex(bl.hash)))                                             AS block_hash_hex,
+  l.timestamp                                                                   AS timestamp,
+  concat('0x', lower(hex(th.transaction_hash)))                                 AS transaction_hash_hex,
+  l.transaction_index,
+  l.log_index,
+  concat('0x', lower(hex(l.address)))                                           AS address_hex,
+  concat('0x', lower(hex(l.data)))                                              AS data_hex,
+  concat('0x', lower(hex(l.topic0)))                                            AS topic0_hex,
+  if(isNull(l.topic1), NULL, concat('0x', lower(hex(assumeNotNull(l.topic1))))) AS topic1_hex,
+  if(isNull(l.topic2), NULL, concat('0x', lower(hex(assumeNotNull(l.topic2))))) AS topic2_hex,
+  if(isNull(l.topic3), NULL, concat('0x', lower(hex(assumeNotNull(l.topic3))))) AS topic3_hex
 `;
 
 new Elysia()
@@ -359,7 +374,7 @@ new Elysia()
                   partsResult: () =>
                     clickhouse.query({
                       query:
-                        "SELECT formatReadableSize(sum(data_compressed_bytes)) AS compressed, round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) AS ratio FROM system.parts WHERE table = 'logs' AND active",
+                        "SELECT formatReadableSize(sum(data_compressed_bytes)) AS compressed, round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) AS ratio FROM system.parts WHERE table IN ('logs', 'transaction_hashes') AND active",
                       format: "JSONEachRow",
                     }),
                 });
@@ -489,22 +504,22 @@ new Elysia()
                 const emitterHex = query.emitter?.toLowerCase().slice(2);
 
                 const cursorClause = cursor
-                  ? "AND (block_number, log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
+                  ? "AND (l.block_number, l.log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
                   : "";
                 const addressClause = emitterHex
-                  ? "AND address = unhex({emitterHex: String})"
+                  ? "AND l.address = unhex({emitterHex: String})"
                   : "";
 
                 const result = await clickhouse.query({
                   query: `
                     SELECT ${LOG_SELECT}
-                    FROM ethereum.logs
+                    FROM ${LOG_FROM}
                     WHERE
-                      chain_id = {chainId: UInt32}
-                      AND topic0 = unhex({topicHex: String})
+                      l.chain_id = {chainId: UInt32}
+                      AND l.topic0 = unhex({topicHex: String})
                       ${cursorClause}
                       ${addressClause}
-                    ORDER BY block_number, log_index
+                    ORDER BY l.block_number, l.log_index
                     LIMIT {limit: UInt32}
                   `,
                   query_params: {
@@ -586,10 +601,10 @@ new Elysia()
                 const result = await clickhouse.query({
                   query: `
                     SELECT ${LOG_SELECT}
-                    FROM ethereum.logs
-                    WHERE chain_id = {chainId: UInt32}
-                      AND block_number = {blockNumber: UInt64}
-                      AND log_index = {logIndex: UInt32}
+                    FROM ${LOG_FROM}
+                    WHERE l.chain_id = {chainId: UInt32}
+                      AND l.block_number = {blockNumber: UInt64}
+                      AND l.log_index = {logIndex: UInt32}
                     LIMIT 1
                   `,
                   query_params: {

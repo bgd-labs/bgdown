@@ -21,9 +21,8 @@ const FLUSH_INTERVAL_MS = 10_000;
 interface LogRow {
   chain_id: number;
   block_number: number;
-  block_hash: Buffer; // FixedString(32) — raw 32 bytes
   timestamp: number;
-  transaction_hash: Buffer; // FixedString(32) — raw 32 bytes
+  transaction_id: bigint; // UInt64 = block_number * 100000 + transaction_index
   transaction_index: number;
   log_index: number;
   address: Buffer; // FixedString(20) — raw 20 bytes
@@ -33,6 +32,12 @@ interface LogRow {
   topic2: Buffer | null;
   topic3: Buffer | null;
   removed: number;
+}
+
+interface TxHashRow {
+  chain_id: number;
+  transaction_id: bigint; // UInt64
+  transaction_hash: Buffer; // FixedString(32)
 }
 
 interface BlockRow {
@@ -94,9 +99,10 @@ function logToRow(
   return {
     chain_id: chainId,
     block_number: log.blockNumber ?? 0,
-    block_hash: hexBuf(log.blockHash, 32),
     timestamp: timestamps.get(log.blockNumber ?? 0) ?? 0,
-    transaction_hash: hexBuf(log.transactionHash, 32),
+    transaction_id:
+      BigInt(log.blockNumber ?? 0) * 100000n +
+      BigInt(log.transactionIndex ?? 0),
     transaction_index: log.transactionIndex ?? 0,
     log_index: log.logIndex ?? 0,
     address: hexBuf(log.address, 20),
@@ -181,9 +187,8 @@ function serializeBatch(rows: LogRow[]): Buffer {
   for (const row of rows) {
     size += 4; // chain_id UInt32
     size += 8; // block_number UInt64
-    size += 32; // block_hash FixedString(32)
     size += 4; // timestamp UInt32
-    size += 32; // transaction_hash FixedString(32)
+    size += 8; // transaction_id UInt64
     size += 4; // transaction_index UInt32
     size += 4; // log_index UInt32
     size += 20; // address FixedString(20)
@@ -207,12 +212,9 @@ function serializeBatch(rows: LogRow[]): Buffer {
     off += 4;
     buf.writeUInt32LE(0, off);
     off += 4;
-    row.block_hash.copy(buf, off);
-    off += 32;
     buf.writeUInt32LE(row.timestamp, off);
     off += 4;
-    row.transaction_hash.copy(buf, off);
-    off += 32;
+    off = writeUInt64LE(buf, row.transaction_id, off);
     buf.writeUInt32LE(row.transaction_index, off);
     off += 4;
     buf.writeUInt32LE(row.log_index, off);
@@ -440,7 +442,7 @@ async function flushLogBatch(batch: LogRow[], log: pino.Logger): Promise<void> {
   // @clickhouse/client doesn't expose RowBinary as an insert format, so we
   // use the HTTP interface directly. RowBinary is ~2× faster than JSON and
   // lets us store hashes/addresses as true binary rather than hex strings.
-  const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.logs FORMAT RowBinary`)}`;
+  const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.logs (chain_id, block_number, timestamp, transaction_id, transaction_index, log_index, address, data, topic0, topic1, topic2, topic3, removed) FORMAT RowBinary`)}`;
   const credentials = btoa(
     `${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`,
   );
@@ -453,6 +455,44 @@ async function flushLogBatch(batch: LogRow[], log: pino.Logger): Promise<void> {
     const body = await res.text();
     log.error({ status: res.status, body }, "ClickHouse insert failed");
     throw new Error(`ClickHouse insert failed [${res.status}]: ${body}`);
+  }
+}
+
+function serializeTxHashBatch(rows: TxHashRow[]): Buffer {
+  // RowBinary: chain_id UInt32 + transaction_id UInt64 + transaction_hash FixedString(32)
+  const buf = Buffer.allocUnsafe(rows.length * (4 + 8 + 32));
+  let off = 0;
+  for (const row of rows) {
+    buf.writeUInt32LE(row.chain_id, off);
+    off += 4;
+    off = writeUInt64LE(buf, row.transaction_id, off);
+    row.transaction_hash.copy(buf, off);
+    off += 32;
+  }
+  return buf;
+}
+
+async function flushTxHashBatch(
+  batch: TxHashRow[],
+  log: pino.Logger,
+): Promise<void> {
+  if (batch.length === 0) return;
+  const data = serializeTxHashBatch(batch);
+  const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.transaction_hashes FORMAT RowBinary`)}`;
+  const credentials = btoa(
+    `${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`,
+  );
+  const res = await fetch(url, {
+    method: "POST",
+    body: new Uint8Array(data),
+    headers: { Authorization: `Basic ${credentials}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    log.error({ status: res.status, body }, "ClickHouse tx_hash insert failed");
+    throw new Error(
+      `ClickHouse tx_hash insert failed [${res.status}]: ${body}`,
+    );
   }
 }
 
@@ -532,6 +572,7 @@ type RunStreamConfig = {
   log: pino.Logger;
   logFlusher: Flusher<LogRow>;
   blockFlusher: Flusher<BlockRow>;
+  txHashFlusher: Flusher<TxHashRow>;
 };
 
 async function runStream({
@@ -542,6 +583,7 @@ async function runStream({
   log,
   logFlusher,
   blockFlusher,
+  txHashFlusher,
 }: RunStreamConfig): Promise<{ nextBlock: number; totalLogs: number }> {
   const query = {
     fromBlock,
@@ -554,7 +596,6 @@ async function runStream({
         "LogIndex",
         "TransactionIndex",
         "TransactionHash",
-        "BlockHash",
         "BlockNumber",
         "Address",
         "Data",
@@ -632,11 +673,23 @@ async function runStream({
 
       const timestamps = buildTimestampMap(res.data.blocks);
 
-      const logBatch = res.data.logs.map((l) =>
-        logToRow(l, chainId, timestamps),
-      );
+      // Build log rows and deduplicate tx hashes within this recv() batch.
+      const txHashMap = new Map<bigint, TxHashRow>();
+      const logBatch: LogRow[] = [];
+      for (const l of res.data.logs) {
+        const row = logToRow(l, chainId, timestamps);
+        logBatch.push(row);
+        if (!txHashMap.has(row.transaction_id)) {
+          txHashMap.set(row.transaction_id, {
+            chain_id: chainId,
+            transaction_id: row.transaction_id,
+            transaction_hash: hexBuf(l.transactionHash, 32),
+          });
+        }
+      }
       totalLogs += logBatch.length;
       await logFlusher.enqueue(logBatch);
+      await txHashFlusher.enqueue(Array.from(txHashMap.values()));
 
       const blockBatch = res.data.blocks.map((b) => blockToRow(b, chainId));
       await blockFlusher.enqueue(blockBatch);
@@ -734,6 +787,12 @@ try {
         "blocks",
         BLOCK_FLUSH_BATCH_SIZE,
       );
+      const txHashFlusher = new Flusher<TxHashRow>(
+        log,
+        flushTxHashBatch,
+        "tx_hashes",
+        LOG_FLUSH_BATCH_SIZE,
+      );
       const res = await runStream({
         hypersync,
         chainId: env.CHAIN_ID,
@@ -742,9 +801,11 @@ try {
         log,
         logFlusher,
         blockFlusher,
+        txHashFlusher,
       });
       await logFlusher.waitDrain();
       await blockFlusher.waitDrain();
+      await txHashFlusher.waitDrain();
 
       startBlock = res.nextBlock;
       totalLogs = logFlusher.totalRows;

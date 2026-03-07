@@ -31,6 +31,10 @@ const migrations: Migration[] = [
     name: "0004_optimize_tables",
     up: (await import("./migrations/0004_optimize_tables")).up,
   },
+  {
+    name: "0005_transaction_hashes",
+    up: (await import("./migrations/0005_transaction_hashes")).up,
+  },
 ];
 
 // ── Runner ───────────────────────────────────────────────────────────────────
