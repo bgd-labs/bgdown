@@ -236,6 +236,21 @@ const BLOCK_SELECT = `
   if(isNull(send_root), NULL, concat('0x', lower(hex(assumeNotNull(send_root))))) AS send_root_hex
 `;
 
+const LOG_SELECT = `
+  block_number,
+  concat('0x', lower(hex(block_hash)))        AS block_hash_hex,
+  timestamp,
+  concat('0x', lower(hex(transaction_hash))) AS transaction_hash_hex,
+  transaction_index,
+  log_index,
+  concat('0x', lower(hex(address)))           AS address_hex,
+  concat('0x', lower(hex(data)))              AS data_hex,
+  concat('0x', lower(hex(topic0)))            AS topic0_hex,
+  if(isNull(topic1), NULL, concat('0x', lower(hex(assumeNotNull(topic1))))) AS topic1_hex,
+  if(isNull(topic2), NULL, concat('0x', lower(hex(assumeNotNull(topic2))))) AS topic2_hex,
+  if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex
+`;
+
 new Elysia()
   .use(logger())
   .onError(({ error, request }) => {
@@ -371,282 +386,265 @@ new Elysia()
       },
     },
   )
-  .get(
-    "/:chainId/logs",
-    async ({ params, query }) => {
-      const limit = Math.min(query.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
-
-      const cursor = query.cursor ? decodeCursor(query.cursor) : null;
-
-      // Strip 0x prefix for unhex(); toLowerCase normalises checksummed addresses.
-      const topicHex = query.topic.slice(2);
-      const emitterHex = query.emitter?.toLowerCase().slice(2);
-
-      // Cursor clause omitted on the first page to avoid UInt32/Int64 coercion
-      // issues with sentinel values in ClickHouse tuple comparisons.
-      const cursorClause = cursor
-        ? "AND (block_number, log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
-        : "";
-      const addressClause = emitterHex
-        ? "AND address = unhex({emitterHex: String})"
-        : "";
-
-      // ClickHouse resolves SELECT aliases in WHERE, so aliases must not
-      // shadow column names used in the WHERE clause (topic0, address).
-      // We use distinct alias names (_hex suffix) to avoid the conflict.
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            block_number,
-            concat('0x', lower(hex(block_hash)))        AS block_hash_hex,
-            timestamp,
-            concat('0x', lower(hex(transaction_hash))) AS transaction_hash_hex,
-            transaction_index,
-            log_index,
-            concat('0x', lower(hex(address)))           AS address_hex,
-            concat('0x', lower(hex(data)))              AS data_hex,
-            concat('0x', lower(hex(topic0)))            AS topic0_hex,
-            if(isNull(topic1), NULL, concat('0x', lower(hex(assumeNotNull(topic1))))) AS topic1_hex,
-            if(isNull(topic2), NULL, concat('0x', lower(hex(assumeNotNull(topic2))))) AS topic2_hex,
-            if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex
-          FROM ethereum.logs
-          WHERE
-            chain_id = {chainId: UInt32}
-            AND topic0 = unhex({topicHex: String})
-            ${cursorClause}
-            ${addressClause}
-          ORDER BY block_number, log_index
-          LIMIT {limit: UInt32}
-        `,
-        query_params: {
-          chainId: params.chainId,
-          topicHex,
-          limit,
-          ...(cursor
-            ? {
-                cursorBlock: cursor.blockNumber,
-                cursorLogIndex: cursor.logIndex,
-              }
-            : {}),
-          ...(emitterHex ? { emitterHex } : {}),
-        },
-        format: "JSONEachRow",
-      });
-
-      const rows = await result.json<LogRow>();
-      const logs = rows.map(rowToLog);
-
-      const lastRow = rows.at(-1);
-      const nextCursor =
-        rows.length === limit && lastRow
-          ? encodeCursor(
-              Number(lastRow.block_number),
-              Number(lastRow.log_index),
-            )
-          : null;
-
-      return { logs, nextCursor };
-    },
+  .guard(
     {
       beforeHandle: ({ query, status }) => {
         if (!tokenSet.has(query.token)) return status(401, "Unauthorized");
       },
-      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       query: t.Object({
         token: t.String({
           description: "API token",
-          examples: ["my-api-token"],
+          examples: ["replace-with-secure-token"],
         }),
-        topic: t.String({
-          description:
-            "Event signature hash (topic0) — required, maps directly to the primary index",
-          examples: [
-            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-          ],
-        }),
-        emitter: t.Optional(
-          t.String({
-            description:
-              "Contract address; combined with topic for a full primary-key lookup",
-            examples: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
-          }),
-        ),
-        cursor: t.Optional(
-          t.String({
-            description:
-              "Opaque pagination cursor from the previous response's nextCursor",
-            examples: ["MTAwMDAwMDA6MA"],
-          }),
-        ),
-        limit: t.Optional(
-          t.Numeric({
-            description: `Number of logs to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
-            examples: [100],
-          }),
-        ),
       }),
       response: {
-        200: t.Object({
-          logs: t.Array(Log),
-          nextCursor: t.Nullable(
-            t.String({
-              description:
-                "Pass as cursor in the next request to fetch the following page; null when no more results",
-            }),
-          ),
-        }),
         401: t.String(),
       },
     },
-  )
-  .get(
-    "/:chainId/blocks",
-    async ({ params, query }) => {
-      const limit = Math.min(query.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
-      const cursor = query.cursor ? decodeBlockCursor(query.cursor) : null;
+    (app) =>
+      app
+        .get(
+          "/:chainId/logs",
+          async ({ params, query }) => {
+            const limit = Math.min(query.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+            const cursor = query.cursor ? decodeCursor(query.cursor) : null;
 
-      const cursorClause = cursor ? "AND number > {cursorBlock: UInt64}" : "";
+            const topicHex = query.topic.slice(2);
+            const emitterHex = query.emitter?.toLowerCase().slice(2);
 
-      const result = await clickhouse.query({
-        query: `
-          SELECT ${BLOCK_SELECT}
-          FROM ethereum.blocks
-          WHERE chain_id = {chainId: UInt32}
-            ${cursorClause}
-          ORDER BY number
-          LIMIT {limit: UInt32}
-        `,
-        query_params: {
-          chainId: params.chainId,
-          limit,
-          ...(cursor ? { cursorBlock: cursor } : {}),
-        },
-        format: "JSONEachRow",
-      });
+            const cursorClause = cursor
+              ? "AND (block_number, log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
+              : "";
+            const addressClause = emitterHex
+              ? "AND address = unhex({emitterHex: String})"
+              : "";
 
-      const rows = await result.json<BlockRow>();
-      const blocks = rows.map(rowToBlock);
+            const result = await clickhouse.query({
+              query: `
+                SELECT ${LOG_SELECT}
+                FROM ethereum.logs
+                WHERE
+                  chain_id = {chainId: UInt32}
+                  AND topic0 = unhex({topicHex: String})
+                  ${cursorClause}
+                  ${addressClause}
+                ORDER BY block_number, log_index
+                LIMIT {limit: UInt32}
+              `,
+              query_params: {
+                chainId: params.chainId,
+                topicHex,
+                limit,
+                ...(cursor
+                  ? {
+                      cursorBlock: cursor.blockNumber,
+                      cursorLogIndex: cursor.logIndex,
+                    }
+                  : {}),
+                ...(emitterHex ? { emitterHex } : {}),
+              },
+              format: "JSONEachRow",
+            });
 
-      const lastRow = rows.at(-1);
-      const nextCursor =
-        rows.length === limit && lastRow
-          ? encodeBlockCursor(Number(lastRow.number))
-          : null;
+            const rows = await result.json<LogRow>();
+            const logs = rows.map(rowToLog);
 
-      return { blocks, nextCursor };
-    },
-    {
-      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
-      query: t.Object({
-        cursor: t.Optional(
-          t.String({
-            description:
-              "Opaque pagination cursor from the previous response's nextCursor",
-            examples: ["MTAwMDA"],
-          }),
-        ),
-        limit: t.Optional(
-          t.Numeric({
-            description: `Number of blocks to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
-            examples: [100],
-          }),
-        ),
-      }),
-      response: {
-        200: t.Object({
-          blocks: t.Array(Block),
-          nextCursor: t.Nullable(
-            t.String({
-              description:
-                "Pass as cursor in the next request to fetch the following page; null when no more results",
+            const lastRow = rows.at(-1);
+            const nextCursor =
+              rows.length === limit && lastRow
+                ? encodeCursor(
+                    Number(lastRow.block_number),
+                    Number(lastRow.log_index),
+                  )
+                : null;
+
+            return { logs, nextCursor };
+          },
+          {
+            params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
+            query: t.Object({
+              topic: t.String({
+                description:
+                  "Event signature hash (topic0) — required, maps directly to the primary index",
+                examples: [
+                  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                ],
+              }),
+              emitter: t.Optional(
+                t.String({
+                  description:
+                    "Contract address; combined with topic for a full primary-key lookup",
+                  examples: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
+                }),
+              ),
+              cursor: t.Optional(
+                t.String({
+                  description:
+                    "Opaque pagination cursor from the previous response's nextCursor",
+                  examples: ["MTAwMDAwMDA6MA"],
+                }),
+              ),
+              limit: t.Optional(
+                t.Numeric({
+                  description: `Number of logs to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
+                  examples: [100],
+                }),
+              ),
             }),
-          ),
-        }),
-      },
-    },
-  )
-  .get(
-    "/:chainId/block/:blockNumber",
-    async ({ params, status }) => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT ${BLOCK_SELECT}
-          FROM ethereum.blocks
-          WHERE chain_id = {chainId: UInt32}
-            AND number = {blockNumber: UInt64}
-          LIMIT 1
-        `,
-        query_params: {
-          chainId: params.chainId,
-          blockNumber: params.blockNumber,
-        },
-        format: "JSONEachRow",
-      });
+            response: {
+              200: t.Object({
+                logs: t.Array(Log),
+                nextCursor: t.Nullable(
+                  t.String({
+                    description:
+                      "Pass as cursor in the next request to fetch the following page; null when no more results",
+                  }),
+                ),
+              }),
+            },
+          },
+        )
+        .get(
+          "/:chainId/log/:blockNumber/:logIndex",
+          async ({ params, status }) => {
+            const result = await clickhouse.query({
+              query: `
+                SELECT ${LOG_SELECT}
+                FROM ethereum.logs
+                WHERE chain_id = {chainId: UInt32}
+                  AND block_number = {blockNumber: UInt64}
+                  AND log_index = {logIndex: UInt32}
+                LIMIT 1
+              `,
+              query_params: {
+                chainId: params.chainId,
+                blockNumber: params.blockNumber,
+                logIndex: params.logIndex,
+              },
+              format: "JSONEachRow",
+            });
 
-      const rows = await result.json<BlockRow>();
-      if (rows.length === 0) return status(404, "Block not found");
+            const rows = await result.json<LogRow>();
+            if (rows.length === 0) return status(404, "Log not found");
 
-      return rowToBlock(rows[0]);
-    },
-    {
-      params: t.Object({
-        chainId: t.String({ examples: ["1"] }),
-        blockNumber: t.String({ examples: ["17000000"] }),
-      }),
-      response: {
-        200: Block,
-        404: t.String(),
-      },
-    },
-  )
-  .get(
-    "/:chainId/log/:blockNumber/:logIndex",
-    async ({ params, status }) => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            block_number,
-            concat('0x', lower(hex(block_hash)))        AS block_hash_hex,
-            timestamp,
-            concat('0x', lower(hex(transaction_hash))) AS transaction_hash_hex,
-            transaction_index,
-            log_index,
-            concat('0x', lower(hex(address)))           AS address_hex,
-            concat('0x', lower(hex(data)))              AS data_hex,
-            concat('0x', lower(hex(topic0)))            AS topic0_hex,
-            if(isNull(topic1), NULL, concat('0x', lower(hex(assumeNotNull(topic1))))) AS topic1_hex,
-            if(isNull(topic2), NULL, concat('0x', lower(hex(assumeNotNull(topic2))))) AS topic2_hex,
-            if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex
-          FROM ethereum.logs
-          WHERE chain_id = {chainId: UInt32}
-            AND block_number = {blockNumber: UInt64}
-            AND log_index = {logIndex: UInt32}
-          LIMIT 1
-        `,
-        query_params: {
-          chainId: params.chainId,
-          blockNumber: params.blockNumber,
-          logIndex: params.logIndex,
-        },
-        format: "JSONEachRow",
-      });
+            return rowToLog(rows[0]);
+          },
+          {
+            params: t.Object({
+              chainId: t.String({ examples: ["1"] }),
+              blockNumber: t.String({ examples: ["17000000"] }),
+              logIndex: t.String({ examples: ["0"] }),
+            }),
+            response: {
+              200: Log,
+              404: t.String(),
+            },
+          },
+        )
+        .get(
+          "/:chainId/blocks",
+          async ({ params, query }) => {
+            const limit = Math.min(query.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+            const cursor = query.cursor
+              ? decodeBlockCursor(query.cursor)
+              : null;
 
-      const rows = await result.json<LogRow>();
-      if (rows.length === 0) return status(404, "Log not found");
+            const cursorClause = cursor
+              ? "AND number > {cursorBlock: UInt64}"
+              : "";
 
-      return rowToLog(rows[0]);
-    },
-    {
-      params: t.Object({
-        chainId: t.String({ examples: ["1"] }),
-        blockNumber: t.String({ examples: ["17000000"] }),
-        logIndex: t.String({ examples: ["0"] }),
-      }),
-      response: {
-        200: Log,
-        404: t.String(),
-      },
-    },
+            const result = await clickhouse.query({
+              query: `
+                SELECT ${BLOCK_SELECT}
+                FROM ethereum.blocks
+                WHERE chain_id = {chainId: UInt32}
+                  ${cursorClause}
+                ORDER BY number
+                LIMIT {limit: UInt32}
+              `,
+              query_params: {
+                chainId: params.chainId,
+                limit,
+                ...(cursor ? { cursorBlock: cursor } : {}),
+              },
+              format: "JSONEachRow",
+            });
+
+            const rows = await result.json<BlockRow>();
+            const blocks = rows.map(rowToBlock);
+
+            const lastRow = rows.at(-1);
+            const nextCursor =
+              rows.length === limit && lastRow
+                ? encodeBlockCursor(Number(lastRow.number))
+                : null;
+
+            return { blocks, nextCursor };
+          },
+          {
+            params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
+            query: t.Object({
+              cursor: t.Optional(
+                t.String({
+                  description:
+                    "Opaque pagination cursor from the previous response's nextCursor",
+                  examples: ["MTAwMDA"],
+                }),
+              ),
+              limit: t.Optional(
+                t.Numeric({
+                  description: `Number of blocks to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
+                  examples: [100],
+                }),
+              ),
+            }),
+            response: {
+              200: t.Object({
+                blocks: t.Array(Block),
+                nextCursor: t.Nullable(
+                  t.String({
+                    description:
+                      "Pass as cursor in the next request to fetch the following page; null when no more results",
+                  }),
+                ),
+              }),
+            },
+          },
+        )
+        .get(
+          "/:chainId/block/:blockNumber",
+          async ({ params, status }) => {
+            const result = await clickhouse.query({
+              query: `
+                SELECT ${BLOCK_SELECT}
+                FROM ethereum.blocks
+                WHERE chain_id = {chainId: UInt32}
+                  AND number = {blockNumber: UInt64}
+                LIMIT 1
+              `,
+              query_params: {
+                chainId: params.chainId,
+                blockNumber: params.blockNumber,
+              },
+              format: "JSONEachRow",
+            });
+
+            const rows = await result.json<BlockRow>();
+            if (rows.length === 0) return status(404, "Block not found");
+
+            return rowToBlock(rows[0]);
+          },
+          {
+            params: t.Object({
+              chainId: t.String({ examples: ["1"] }),
+              blockNumber: t.String({ examples: ["17000000"] }),
+            }),
+            response: {
+              200: Block,
+              404: t.String(),
+            },
+          },
+        ),
   )
   .listen(env.PORT);
 
