@@ -153,7 +153,7 @@ async function fetchBlockHashes(
     query: `SELECT toString(number) AS num, concat('0x', lower(hex(hash))) AS hash_hex
             FROM ethereum.blocks
             WHERE chain_id = {chainId: UInt32} AND number IN ({nums: Array(UInt64)})`,
-    query_params: { chainId, nums: blockNumbers },
+    query_params: { chainId, nums: blockNumbers.map(Number) },
     format: "JSONEachRow",
   });
   const rows = await result.json<{ num: string; hash_hex: string }>();
@@ -170,7 +170,7 @@ async function fetchTxHashes(
     query: `SELECT toString(transaction_id) AS tid, concat('0x', lower(hex(transaction_hash))) AS hash_hex
             FROM ethereum.transaction_hashes
             WHERE chain_id = {chainId: UInt32} AND transaction_id IN ({tids: Array(UInt64)})`,
-    query_params: { chainId, tids: txIds },
+    query_params: { chainId, tids: txIds.map(Number) },
     format: "JSONEachRow",
   });
   const rows = await result.json<{ tid: string; hash_hex: string }>();
@@ -197,13 +197,13 @@ async function enrichLogs(
     ].filter((t): t is string => t !== null && t !== "");
     return {
       address: row.address_hex,
-      blockHash: blockHashes.get(row.block_number) ?? "0x",
+      blockHash: blockHashes.get(String(row.block_number)) ?? "0x",
       blockNumber: Number(row.block_number),
       timestamp: Number(row.timestamp),
       data: row.data_hex,
       logIndex: Number(row.log_index),
       topics,
-      transactionHash: txHashes.get(row.transaction_id) ?? "0x",
+      transactionHash: txHashes.get(String(row.transaction_id)) ?? "0x",
       transactionIndex: Number(row.transaction_index),
     };
   });
