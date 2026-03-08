@@ -4,33 +4,14 @@ import { all } from "better-all";
 import { Elysia, t } from "elysia";
 import { logger } from "elysia-logger";
 import { rateLimit } from "elysia-rate-limit";
+import { LRUCache } from "lru-cache";
 import { tokenSet } from "./auth";
 import { CHAIN_BY_ID, getHypersyncForChain, getViemForChain } from "./chains";
 import env from "./env";
 
-// Minimal LRU cache backed by Map (insertion order = LRU order in JS Maps).
-class LRU<V> {
-  private m = new Map<string, V>();
-  constructor(private max: number) {}
-  get(k: string): V | undefined {
-    const v = this.m.get(k);
-    if (v === undefined) return undefined;
-    this.m.delete(k);
-    this.m.set(k, v);
-    return v;
-  }
-  set(k: string, v: V) {
-    if (this.m.has(k)) this.m.delete(k);
-    else if (this.m.size >= this.max)
-      this.m.delete(this.m.keys().next().value!);
-    this.m.set(k, v);
-  }
-}
-
-// Block hashes and tx hashes are immutable once finalized — safe to cache
-// indefinitely. 50k blocks ≈ 3.7 MB; 200k tx ids ≈ 14.8 MB.
-const blockHashCache = new LRU<string>(50_000);
-const txHashCache = new LRU<string>(200_000);
+// Block hashes and tx hashes are immutable once finalized — safe to cache.
+const blockHashCache = new LRUCache<string, string>({ max: 50_000 });
+const txHashCache = new LRUCache<string, string>({ max: 200_000 });
 
 const DEFAULT_LIMIT = 1_000;
 const MAX_LIMIT = 50_000;
