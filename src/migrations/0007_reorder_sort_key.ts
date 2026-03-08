@@ -65,7 +65,14 @@ export async function up(client: ClickHouseClient): Promise<void> {
   // 2. Copy all data (sorts into new key order as it writes).
   //    ~26 min at production scale. Ingester must be paused.
   await client.command({
-    query: `INSERT INTO ${DB}.logs_new SELECT * FROM ${DB}.logs`,
+    query: `
+      INSERT INTO ${DB}.logs_new
+      SELECT
+        chain_id, block_number, timestamp, transaction_id,
+        transaction_index, log_index, address, data,
+        topic0, topic1, topic2, topic3, removed
+      FROM ${DB}.logs
+    `,
     clickhouse_settings: { send_progress_in_http_headers: 1 },
   });
 
