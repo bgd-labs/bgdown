@@ -18,17 +18,23 @@ export async function up(client: ClickHouseClient): Promise<void> {
   // ORDER BY. This means the sparse index includes block_number, so fromBlock/
   // toBlock range scans use binary search rather than a full scan.
   //
+  // Projection note: migration 0006 added proj_topic0_chrono with ORDER BY
+  // (chain_id, topic0, block_number, log_index). The new sort key is a
+  // superset of that order, making the projection redundant. logs_new is
+  // created without it intentionally.
+  //
   // Prerequisites:
   //   - Pause the ingester before running this migration.
   //   - ~210 GiB free disk: logs_new grows alongside logs until the rename.
-  //   - Disk returns to ~205 GiB after DROP TABLE logs_old.
+  //   - logs_old is kept after the rename — drop it manually once you have
+  //     verified the migrated table is correct:
+  //       DROP TABLE ethereum.logs_old
   //
   // Timing at production scale (6.4B rows / 205 GiB compressed, measured on
   // a 50M-row local sample and extrapolated):
   //   CREATE + schema:          < 1 s
   //   INSERT SELECT (copy):    ~26 min   ← dominant cost
   //   RENAME (atomic swap):     < 1 s
-  //   DROP old table:           < 1 s
   //   ADD + MATERIALIZE INDEX:  < 1 min  (background mutation)
 
   // 1. Create new table with the target sort order.
@@ -64,16 +70,13 @@ export async function up(client: ClickHouseClient): Promise<void> {
   });
 
   // 3. Atomic swap: old table becomes logs_old, new table becomes logs.
+  //    logs_old is intentionally kept — drop it manually after verifying
+  //    the migrated table looks correct (sort key, row count, query perf).
   await client.command({
     query: `RENAME TABLE ${DB}.logs TO ${DB}.logs_old, ${DB}.logs_new TO ${DB}.logs`,
   });
 
-  // 4. Drop the old table to recover disk space.
-  await client.command({
-    query: `DROP TABLE IF EXISTS ${DB}.logs_old`,
-  });
-
-  // 5. Add bloom filter skip index on address.
+  // 4. Add bloom filter skip index on address.
   //    Compensates for address no longer being a leading sort column.
   //    Storage overhead: negligible (< 10 MB at production scale).
   await client.command({
@@ -83,7 +86,7 @@ export async function up(client: ClickHouseClient): Promise<void> {
     `,
   });
 
-  // 6. Materialize the index for existing parts (background mutation, < 1 min).
+  // 5. Materialize the index for existing parts (background mutation, < 1 min).
   await client.command({
     query: `ALTER TABLE ${DB}.logs MATERIALIZE INDEX idx_address`,
   });
