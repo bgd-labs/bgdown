@@ -23,7 +23,8 @@ const clickhouse = createClient({
   database: env.CLICKHOUSE_DB,
   compression: {
     response: true,
-  }
+    request: true,
+  },
 });
 
 const Log = t.Object({
@@ -156,29 +157,33 @@ async function fetchBlockHashes(
   chainId: string,
   blockNumbers: string[],
 ): Promise<Map<string, string>> {
-  if (blockNumbers.length === 0) return new Map();
-  const out = new Map<string, string>();
-  const missing: string[] = [];
-  for (const num of blockNumbers) {
-    const cached = blockHashCache.get(`${chainId}:${num}`);
-    if (cached !== undefined) out.set(num, cached);
-    else missing.push(num);
-  }
-  if (missing.length > 0) {
-    const result = await clickhouse.query({
-      query: `SELECT toString(number) AS num, concat('0x', lower(hex(hash))) AS hash_hex
-              FROM ethereum.blocks
-              WHERE chain_id = {chainId: UInt32} AND number IN ({nums: Array(UInt64)})`,
-      query_params: { chainId, nums: missing.map(Number) },
-      format: "JSONEachRow",
-    });
-    const rows = await result.json<{ num: string; hash_hex: string }>();
-    for (const r of rows) {
-      blockHashCache.set(`${chainId}:${r.num}`, r.hash_hex);
-      out.set(r.num, r.hash_hex);
+  try {
+    if (blockNumbers.length === 0) return new Map();
+    const out = new Map<string, string>();
+    const missing: string[] = [];
+    for (const num of blockNumbers) {
+      const cached = blockHashCache.get(`${chainId}:${num}`);
+      if (cached !== undefined) out.set(num, cached);
+      else missing.push(num);
     }
+    if (missing.length > 0) {
+      const result = await clickhouse.query({
+        query: `SELECT toString(number) AS num, concat('0x', lower(hex(hash))) AS hash_hex
+                FROM ethereum.blocks
+                WHERE chain_id = {chainId: UInt32} AND number IN ({nums: Array(UInt64)})`,
+        query_params: { chainId, nums: missing.map(Number) },
+        format: "JSONEachRow",
+      });
+      const rows = await result.json<{ num: string; hash_hex: string }>();
+      for (const r of rows) {
+        blockHashCache.set(`${chainId}:${r.num}`, r.hash_hex);
+        out.set(r.num, r.hash_hex);
+      }
+    }
+    return out;
+  } catch (err) {
+    throw new Error(`fetchBlockHashes failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  return out;
 }
 
 // Fetch transaction_hash for a set of transaction_ids in one primary-key lookup.
@@ -186,29 +191,33 @@ async function fetchTxHashes(
   chainId: string,
   txIds: string[],
 ): Promise<Map<string, string>> {
-  if (txIds.length === 0) return new Map();
-  const out = new Map<string, string>();
-  const missing: string[] = [];
-  for (const tid of txIds) {
-    const cached = txHashCache.get(`${chainId}:${tid}`);
-    if (cached !== undefined) out.set(tid, cached);
-    else missing.push(tid);
-  }
-  if (missing.length > 0) {
-    const result = await clickhouse.query({
-      query: `SELECT toString(transaction_id) AS tid, concat('0x', lower(hex(transaction_hash))) AS hash_hex
-              FROM ethereum.transaction_hashes
-              WHERE chain_id = {chainId: UInt32} AND transaction_id IN ({tids: Array(UInt64)})`,
-      query_params: { chainId, tids: missing.map(Number) },
-      format: "JSONEachRow",
-    });
-    const rows = await result.json<{ tid: string; hash_hex: string }>();
-    for (const r of rows) {
-      txHashCache.set(`${chainId}:${r.tid}`, r.hash_hex);
-      out.set(r.tid, r.hash_hex);
+  try {
+    if (txIds.length === 0) return new Map();
+    const out = new Map<string, string>();
+    const missing: string[] = [];
+    for (const tid of txIds) {
+      const cached = txHashCache.get(`${chainId}:${tid}`);
+      if (cached !== undefined) out.set(tid, cached);
+      else missing.push(tid);
     }
+    if (missing.length > 0) {
+      const result = await clickhouse.query({
+        query: `SELECT toString(transaction_id) AS tid, concat('0x', lower(hex(transaction_hash))) AS hash_hex
+                FROM ethereum.transaction_hashes
+                WHERE chain_id = {chainId: UInt32} AND transaction_id IN ({tids: Array(UInt64)})`,
+        query_params: { chainId, tids: missing.map(Number) },
+        format: "JSONEachRow",
+      });
+      const rows = await result.json<{ tid: string; hash_hex: string }>();
+      for (const r of rows) {
+        txHashCache.set(`${chainId}:${r.tid}`, r.hash_hex);
+        out.set(r.tid, r.hash_hex);
+      }
+    }
+    return out;
+  } catch (err) {
+    throw new Error(`fetchTxHashes failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  return out;
 }
 
 // Enrich raw log rows with block_hash and transaction_hash via parallel lookups.
