@@ -137,9 +137,9 @@ interface BlockRow {
   send_root_hex: string | null;
 }
 
-function encodeCursor(blockNumber: number, logIndex: number): string {
-  return Buffer.from(`${blockNumber}:${logIndex}`).toString("base64url");
-}
+// function encodeCursor(blockNumber: number, logIndex: number): string {
+//   return Buffer.from(`${blockNumber}:${logIndex}`).toString("base64url");
+// }
 
 function decodeCursor(cursor: string): {
   blockNumber: number;
@@ -574,7 +574,7 @@ new Elysia()
             )
             .get(
               "/logs",
-              async ({ params, query }) => {
+              async function* ({ params, query }) {
                 const limit = Math.min(query.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
                 const cursor = query.cursor ? decodeCursor(query.cursor) : null;
 
@@ -633,28 +633,26 @@ new Elysia()
                   format: "JSONEachRow",
                 });
 
-                const rowPromises: ReturnType<typeof enrichLogs>[] = [];
                 for await (const chunk of result.stream()) {
-                  rowPromises.push(
-                    enrichLogs(
+                    const logs = await enrichLogs(
                       params.chainId,
                       chunk.map((r) => r.json<LogRow>()),
-                    ),
-                  );
+                    )
+                    yield* logs;
                 }
 
-                const logs = (await Promise.all(rowPromises)).flat();
+                // const logs = (await Promise.all(rowPromises)).flat();
 
-                const lastLog = logs.at(-1);
-                const nextCursor =
-                  logs.length === limit && lastLog
-                    ? encodeCursor(
-                        Number(lastLog.blockNumber),
-                        Number(lastLog.logIndex),
-                      )
-                    : null;
+                // const lastLog = logs.at(-1);
+                // const nextCursor =
+                //   logs.length === limit && lastLog
+                //     ? encodeCursor(
+                //         Number(lastLog.blockNumber),
+                //         Number(lastLog.logIndex),
+                //       )
+                //     : null;
 
-                return { logs, nextCursor };
+                // return { logs, nextCursor };
               },
               {
                 params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
@@ -707,17 +705,17 @@ new Elysia()
                     }),
                   ),
                 }),
-                response: {
-                  200: t.Object({
-                    logs: t.Array(Log),
-                    nextCursor: t.Nullable(
-                      t.String({
-                        description:
-                          "Pass as cursor in the next request to fetch the following page; null when no more results",
-                      }),
-                    ),
-                  }),
-                },
+                // response: {
+                //   200: t.Object({
+                //     logs: t.Array(Log),
+                //     nextCursor: t.Nullable(
+                //       t.String({
+                //         description:
+                //           "Pass as cursor in the next request to fetch the following page; null when no more results",
+                //       }),
+                //     ),
+                //   }),
+                // },
               },
             )
             .get(
