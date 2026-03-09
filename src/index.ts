@@ -807,6 +807,10 @@ try {
       await blockFlusher.waitDrain();
       await txHashFlusher.waitDrain();
 
+      // Reload hash dictionaries so the API serves freshly ingested data.
+      await clickhouse.command({ query: "SYSTEM RELOAD DICTIONARY ethereum.dict_block_hash" });
+      await clickhouse.command({ query: "SYSTEM RELOAD DICTIONARY ethereum.dict_tx_hash" });
+
       startBlock = res.nextBlock;
       totalLogs = logFlusher.totalRows;
 

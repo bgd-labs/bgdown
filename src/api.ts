@@ -242,26 +242,18 @@ const BLOCK_SELECT = `
 `;
 
 const LOG_SELECT = `
-  l.block_number,
-  l.timestamp,
-  l.transaction_index,
-  l.log_index,
-  concat('0x', lower(hex(l.address)))                                           AS address_hex,
-  concat('0x', lower(hex(l.data)))                                              AS data_hex,
-  concat('0x', lower(hex(l.topic0)))                                            AS topic0_hex,
-  if(isNull(l.topic1), NULL, concat('0x', lower(hex(assumeNotNull(l.topic1))))) AS topic1_hex,
-  if(isNull(l.topic2), NULL, concat('0x', lower(hex(assumeNotNull(l.topic2))))) AS topic2_hex,
-  if(isNull(l.topic3), NULL, concat('0x', lower(hex(assumeNotNull(l.topic3))))) AS topic3_hex,
-  concat('0x', lower(hex(b.hash)))                                              AS block_hash_hex,
-  concat('0x', lower(hex(th.transaction_hash)))                                 AS transaction_hash_hex
-`;
-
-const LOG_FROM = `
-  ethereum.logs AS l
-  INNER JOIN ethereum.blocks AS b
-    ON b.chain_id = l.chain_id AND b.number = l.block_number
-  INNER JOIN ethereum.transaction_hashes AS th
-    ON th.chain_id = l.chain_id AND th.transaction_id = l.transaction_id
+  block_number,
+  timestamp,
+  transaction_index,
+  log_index,
+  concat('0x', lower(hex(address)))                                           AS address_hex,
+  concat('0x', lower(hex(data)))                                              AS data_hex,
+  concat('0x', lower(hex(topic0)))                                            AS topic0_hex,
+  if(isNull(topic1), NULL, concat('0x', lower(hex(assumeNotNull(topic1))))) AS topic1_hex,
+  if(isNull(topic2), NULL, concat('0x', lower(hex(assumeNotNull(topic2))))) AS topic2_hex,
+  if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex,
+  concat('0x', lower(hex(dictGet('ethereum.dict_block_hash', 'hash', tuple(chain_id, block_number)))))           AS block_hash_hex,
+  concat('0x', lower(hex(dictGet('ethereum.dict_tx_hash', 'transaction_hash', tuple(chain_id, transaction_id))))) AS transaction_hash_hex
 `;
 
 new Elysia()
@@ -507,29 +499,29 @@ new Elysia()
                 // Lower bound: cursor position takes priority over fromBlock when
                 // paginating; fromBlock applies only on the first page.
                 const lowerClause = cursor
-                  ? "AND (l.block_number, l.log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
+                  ? "AND (block_number, log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
                   : query.fromBlock !== undefined
-                    ? "AND l.block_number >= {fromBlock: UInt64}"
+                    ? "AND block_number >= {fromBlock: UInt64}"
                     : "";
                 const upperClause =
                   query.toBlock !== undefined
-                    ? "AND l.block_number <= {toBlock: UInt64}"
+                    ? "AND block_number <= {toBlock: UInt64}"
                     : "";
                 const addressClause = emitterHex
-                  ? "AND l.address = unhex({emitterHex: String})"
+                  ? "AND address = unhex({emitterHex: String})"
                   : "";
 
                 const result = await clickhouse.query({
                   query: `
                     SELECT ${LOG_SELECT}
-                    FROM ${LOG_FROM}
+                    FROM ethereum.logs
                     WHERE
-                      l.chain_id = {chainId: UInt32}
-                      AND l.topic0 = unhex({topicHex: String})
+                      chain_id = {chainId: UInt32}
+                      AND topic0 = unhex({topicHex: String})
                       ${lowerClause}
                       ${upperClause}
                       ${addressClause}
-                    ORDER BY l.block_number, l.log_index
+                    ORDER BY block_number, log_index
                     LIMIT {limit: UInt32}
                   `,
                   query_params: {
@@ -644,10 +636,10 @@ new Elysia()
                 const result = await clickhouse.query({
                   query: `
                     SELECT ${LOG_SELECT}
-                    FROM ${LOG_FROM}
-                    WHERE l.chain_id = {chainId: UInt32}
-                      AND l.block_number = {blockNumber: UInt64}
-                      AND l.log_index = {logIndex: UInt32}
+                    FROM ethereum.logs
+                    WHERE chain_id = {chainId: UInt32}
+                      AND block_number = {blockNumber: UInt64}
+                      AND log_index = {logIndex: UInt32}
                     LIMIT 1
                   `,
                   query_params: {

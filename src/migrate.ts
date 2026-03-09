@@ -43,6 +43,10 @@ const migrations: Migration[] = [
     name: "0007_reorder_sort_key",
     up: (await import("./migrations/0007_reorder_sort_key")).up,
   },
+  {
+    name: "0008_hash_dictionaries",
+    up: (await import("./migrations/0008_hash_dictionaries")).up,
+  },
 ];
 
 // ── Runner ───────────────────────────────────────────────────────────────────
