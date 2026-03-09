@@ -11,7 +11,7 @@ import env from "./env";
 
 // Block hashes and tx hashes are immutable once finalized — safe to cache.
 const blockHashCache = new LRUCache<string, string>({ max: 50_000 });
-const txHashCache = new LRUCache<string, string>({ max: 200_000 });
+// const txHashCache = new LRUCache<string, string>({ max: 200_000 });
 
 const DEFAULT_LIMIT = 1_000;
 const MAX_LIMIT = 50_000;
@@ -39,9 +39,9 @@ const Log = t.Object({
   topics: t.Array(t.String(), {
     description: "Indexed log topics; topics[0] is the event signature hash",
   }),
-  transactionHash: t.String({
-    description: "Hash of the transaction that emitted this log",
-  }),
+  // transactionHash: t.String({
+  //   description: "Hash of the transaction that emitted this log",
+  // }),
   transactionIndex: t.Number({
     description: "Index of the transaction within the block",
   }),
@@ -187,38 +187,38 @@ async function fetchBlockHashes(
 }
 
 // Fetch transaction_hash for a set of transaction_ids in one primary-key lookup.
-async function fetchTxHashes(
-  chainId: string,
-  txIds: string[],
-): Promise<Map<string, string>> {
-  try {
-    if (txIds.length === 0) return new Map();
-    const out = new Map<string, string>();
-    const missing: string[] = [];
-    for (const tid of txIds) {
-      const cached = txHashCache.get(`${chainId}:${tid}`);
-      if (cached !== undefined) out.set(tid, cached);
-      else missing.push(tid);
-    }
-    if (missing.length > 0) {
-      const result = await clickhouse.query({
-        query: `SELECT toString(transaction_id) AS tid, concat('0x', lower(hex(transaction_hash))) AS hash_hex
-                FROM ethereum.transaction_hashes
-                WHERE chain_id = {chainId: UInt32} AND transaction_id IN ({tids: Array(UInt64)})`,
-        query_params: { chainId, tids: missing.map(Number) },
-        format: "JSONEachRow",
-      });
-      const rows = await result.json<{ tid: string; hash_hex: string }>();
-      for (const r of rows) {
-        txHashCache.set(`${chainId}:${r.tid}`, r.hash_hex);
-        out.set(r.tid, r.hash_hex);
-      }
-    }
-    return out;
-  } catch (err) {
-    throw new Error(`fetchTxHashes failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
+// async function fetchTxHashes(
+//   chainId: string,
+//   txIds: string[],
+// ): Promise<Map<string, string>> {
+//   try {
+//     if (txIds.length === 0) return new Map();
+//     const out = new Map<string, string>();
+//     const missing: string[] = [];
+//     for (const tid of txIds) {
+//       const cached = txHashCache.get(`${chainId}:${tid}`);
+//       if (cached !== undefined) out.set(tid, cached);
+//       else missing.push(tid);
+//     }
+//     if (missing.length > 0) {
+//       const result = await clickhouse.query({
+//         query: `SELECT toString(transaction_id) AS tid, concat('0x', lower(hex(transaction_hash))) AS hash_hex
+//                 FROM ethereum.transaction_hashes
+//                 WHERE chain_id = {chainId: UInt32} AND transaction_id IN ({tids: Array(UInt64)})`,
+//         query_params: { chainId, tids: missing.map(Number) },
+//         format: "JSONEachRow",
+//       });
+//       const rows = await result.json<{ tid: string; hash_hex: string }>();
+//       for (const r of rows) {
+//         txHashCache.set(`${chainId}:${r.tid}`, r.hash_hex);
+//         out.set(r.tid, r.hash_hex);
+//       }
+//     }
+//     return out;
+//   } catch (err) {
+//     throw new Error(`fetchTxHashes failed: ${err instanceof Error ? err.message : String(err)}`);
+//   }
+// }
 
 // Enrich raw log rows with block_hash and transaction_hash via parallel lookups.
 async function enrichLogs(
@@ -226,10 +226,10 @@ async function enrichLogs(
   rows: LogRow[],
 ): Promise<(typeof Log.static)[]> {
   const blockNums = [...new Set(rows.map((r) => r.block_number))];
-  const txIds = [...new Set(rows.map((r) => r.transaction_id))];
-  const [blockHashes, txHashes] = await Promise.all([
+  // const txIds = [...new Set(rows.map((r) => r.transaction_id))];
+  const [blockHashes] = await Promise.all([
     fetchBlockHashes(chainId, blockNums),
-    fetchTxHashes(chainId, txIds),
+    // fetchTxHashes(chainId, txIds),
   ]);
   return rows.map((row) => {
     const topics = [
@@ -246,7 +246,7 @@ async function enrichLogs(
       data: row.data_hex,
       logIndex: Number(row.log_index),
       topics,
-      transactionHash: txHashes.get(String(row.transaction_id)) ?? "0x",
+      // transactionHash: txHashes.get(String(row.transaction_id)) ?? "0x",
       transactionIndex: Number(row.transaction_index),
     };
   });
