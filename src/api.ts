@@ -562,8 +562,11 @@ new Elysia()
                 const limit = Math.min(query.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
                 const cursor = query.cursor ? decodeCursor(query.cursor) : null;
 
-                const topicHex = query.topic.slice(2);
-                const emitterHex = query.emitter?.toLowerCase().slice(2);
+                const topicHex = query.topic.slice(2).padStart(64, "0");
+                const emitterHex = (query.emitter ?? query.address)
+                  ?.toLowerCase()
+                  .slice(2)
+                  .padStart(40, "0");
 
                 // Lower bound: cursor position takes priority over fromBlock when
                 // paginating; fromBlock applies only on the first page.
@@ -642,6 +645,13 @@ new Elysia()
                     t.String({
                       description:
                         "Contract address; combined with topic for a full primary-key lookup",
+                      examples: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
+                    }),
+                  ),
+                  address: t.Optional(
+                    t.String({
+                      description:
+                        "Alias for emitter — contract address that emitted the log",
                       examples: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
                     }),
                   ),
