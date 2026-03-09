@@ -597,19 +597,15 @@ new Elysia()
 
                 const result = await clickhouse.query({
                   query: `
-                    SELECT
-                      ${LOG_SELECT},
-                      concat('0x', lower(hex(th.transaction_hash))) AS transaction_hash_hex
-                    FROM ethereum.logs l
-                    INNER JOIN ethereum.transaction_hashes th
-                      ON l.chain_id = th.chain_id AND l.transaction_id = th.transaction_id
+                    SELECT ${LOG_SELECT}
+                    FROM ethereum.logs
                     WHERE
-                      l.chain_id = {chainId: UInt32}
-                      AND l.topic0 = unhex({topicHex: String})
-                      ${lowerClause.replace(/block_number/g, 'l.block_number').replace(/log_index/g, 'l.log_index')}
-                      ${upperClause.replace(/block_number/g, 'l.block_number')}
-                      ${addressClause.replace(/address/g, 'l.address')}
-                    ORDER BY l.block_number, l.log_index
+                      chain_id = {chainId: UInt32}
+                      AND topic0 = unhex({topicHex: String})
+                      ${lowerClause}
+                      ${upperClause}
+                      ${addressClause}
+                    ORDER BY block_number, log_index
                     LIMIT {limit: UInt32}
                   `,
                   query_params: {
