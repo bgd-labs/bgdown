@@ -21,6 +21,9 @@ const clickhouse = createClient({
   username: env.CLICKHOUSE_USERNAME,
   password: env.CLICKHOUSE_PASSWORD,
   database: env.CLICKHOUSE_DB,
+  compression: {
+    response: true,
+  }
 });
 
 const Log = t.Object({
