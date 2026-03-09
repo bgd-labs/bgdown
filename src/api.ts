@@ -1,7 +1,7 @@
 import { createClient } from "@clickhouse/client";
 import { openapi } from "@elysiajs/openapi";
 import { all } from "better-all";
-import { Elysia, t } from "elysia";
+import { Elysia, t, sse } from "elysia";
 import { logger } from "elysia-logger";
 import { rateLimit } from "elysia-rate-limit";
 import { LRUCache } from "lru-cache";
@@ -25,6 +25,7 @@ const clickhouse = createClient({
     response: true,
     request: true,
   },
+  request_timeout: 60_000,
 });
 
 const Log = t.Object({
@@ -631,14 +632,19 @@ new Elysia()
                     ...(emitterHex ? { emitterHex } : {}),
                   },
                   format: "JSONEachRow",
+                
                 });
 
                 for await (const chunk of result.stream()) {
-                    const logs = await enrichLogs(
-                      params.chainId,
-                      chunk.map((r) => r.json<LogRow>()),
-                    )
-                    yield* logs;
+                  const logs = await enrichLogs(
+                    params.chainId,
+                    chunk.map((r) => r.json<LogRow>()),
+                  );
+                  for (const log of logs) {
+                    yield sse({
+                      data: log
+                    });
+                  }
                 }
 
                 // const logs = (await Promise.all(rowPromises)).flat();
