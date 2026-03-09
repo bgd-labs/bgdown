@@ -617,7 +617,13 @@ new Elysia()
                   format: "JSONEachRow",
                 });
 
-                const rows = await result.json<LogRow>();
+                const rows: LogRow[] = [];
+                for await (const chunk of result.stream()) {
+                  for (const row of chunk) {
+                    rows.push(row.json());
+                  }
+                }
+
                 const logs = await enrichLogs(params.chainId, rows);
 
                 const lastRow = rows.at(-1);
