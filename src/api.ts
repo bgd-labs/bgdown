@@ -14,7 +14,7 @@ const blockHashCache = new LRUCache<string, string>({ max: 50_000 });
 const txHashCache = new LRUCache<string, string>({ max: 200_000 });
 
 const DEFAULT_LIMIT = 1_000;
-const MAX_LIMIT = 50_000;
+const MAX_LIMIT = 1_000_000;
 
 const clickhouse = createClient({
   url: env.CLICKHOUSE_URL,
