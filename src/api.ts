@@ -632,7 +632,6 @@ new Elysia()
                     ...(emitterHex ? { emitterHex } : {}),
                   },
                   format: "JSONEachRow",
-                
                 });
 
                 for await (const chunk of result.stream()) {
@@ -640,11 +639,9 @@ new Elysia()
                     params.chainId,
                     chunk.map((r) => r.json<LogRow>()),
                   );
-                  for (const log of logs) {
-                    yield sse({
-                      data: log
-                    });
-                  }
+                  yield sse({
+                    data: logs,
+                  });
                 }
 
                 // const logs = (await Promise.all(rowPromises)).flat();
