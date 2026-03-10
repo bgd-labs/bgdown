@@ -52,13 +52,6 @@ export interface BlockRow {
   send_root: Buffer | null; // Nullable(FixedString(32))
 }
 
-// Convert a 0x-prefixed hex string to a fixed-length Buffer of `len` bytes.
-// Returns a zero-filled buffer for missing/empty values.
-export function hexBuf(hex: string | null | undefined, len: number): Buffer {
-  if (!hex || hex.length < 3) return Buffer.alloc(len);
-  return Buffer.from(hex.slice(2), "hex");
-}
-
 // Writes ClickHouse RowBinary format into a single pre-allocated buffer.
 // Grows automatically if the estimate is too small; in practice the initial
 // estimate is generous enough that no reallocation occurs.

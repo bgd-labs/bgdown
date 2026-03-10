@@ -11,13 +11,13 @@ import type pino from "pino";
 import env from "./env";
 import {
   type BlockRow,
-  hexBuf,
   type LogRow,
   serializeBatch,
   serializeBlockBatch,
   serializeTxHashBatch,
   type TxHashRow,
 } from "./row-binary";
+import { hexBuf } from "./utils/helpers";
 
 export const LOG_FLUSH_BATCH_SIZE = 250_000;
 export const BLOCK_FLUSH_BATCH_SIZE = 50_000;
