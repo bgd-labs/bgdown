@@ -1,6 +1,6 @@
 import { t } from "elysia";
 import { LRUCache } from "lru-cache";
-import { clickhouse } from "./shared";
+import { clickhouse } from "../clickhouse";
 
 export const Log = t.Object({
   address: t.String({

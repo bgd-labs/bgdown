@@ -3,8 +3,17 @@ import { Elysia, sse, t } from "elysia";
 import { logger } from "elysia-logger";
 import { rateLimit } from "elysia-rate-limit";
 import { tokenSet } from "./auth";
-import { CHAIN_BY_ID, getHypersyncForChain, getViemForChain } from "./chains";
+import { CHAIN_BY_ID, getViemForChain } from "./chains";
+import {
+  clampLimit,
+  clickhouse,
+  DEFAULT_LIMIT,
+  fetchHeight,
+  fetchStats,
+  MAX_LIMIT,
+} from "./clickhouse";
 import env from "./env";
+import { getHypersyncForChain } from "./hypersync";
 import {
   BLOCK_SELECT,
   Block,
@@ -20,14 +29,6 @@ import {
   Log,
   type LogQueryRow,
 } from "./routes/logs";
-import {
-  clampLimit,
-  clickhouse,
-  DEFAULT_LIMIT,
-  fetchHeight,
-  fetchStats,
-  MAX_LIMIT,
-} from "./routes/shared";
 
 new Elysia()
   .use(logger())

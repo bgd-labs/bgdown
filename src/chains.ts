@@ -1,4 +1,3 @@
-import { HypersyncClient } from "@envio-dev/hypersync-client";
 import { type Chain, createPublicClient, http } from "viem";
 import {
   arbitrum,
@@ -19,7 +18,6 @@ import {
   scroll,
   sonic,
 } from "viem/chains";
-import env from "./env";
 
 const CHAINS = [
   mainnet,
@@ -98,7 +96,6 @@ export const CHAIN_BY_ID: ReadonlyMap<number, ChainConfig> = new Map(
 );
 
 const viemCache = new Map<number, ReturnType<typeof createPublicClient>>();
-const hypersyncCache = new Map<number, HypersyncClient>();
 
 export function getViemForChain(chainId: number) {
   if (!viemCache.has(chainId)) {
@@ -112,19 +109,4 @@ export function getViemForChain(chainId: number) {
   }
   // biome-ignore lint/style/noNonNullAssertion: we know it's there because we just set it if it wasn't
   return viemCache.get(chainId)!;
-}
-
-export function getHypersyncForChain(chainId: number) {
-  if (!hypersyncCache.has(chainId)) {
-    const config = CHAIN_BY_ID.get(chainId);
-    hypersyncCache.set(
-      chainId,
-      new HypersyncClient({
-        url: config?.hypersyncUrl ?? `https://${chainId}.hypersync.xyz`,
-        apiToken: env.HYPERSYNC_API_KEY,
-      }),
-    );
-  }
-  // biome-ignore lint/style/noNonNullAssertion: we know it's there because we just set it if it wasn't
-  return hypersyncCache.get(chainId)!;
 }
