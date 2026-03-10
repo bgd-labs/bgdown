@@ -68,117 +68,125 @@ export function hexBuf(hex: string | null | undefined, len: number): Buffer {
 // Writes ClickHouse RowBinary format into a single pre-allocated buffer.
 // Grows automatically if the estimate is too small; in practice the initial
 // estimate is generous enough that no reallocation occurs.
-class RowBinaryWriter {
-  private buf: Buffer;
-  private off = 0;
+function createWriter(estimatedSize: number) {
+  let buf = Buffer.allocUnsafe(estimatedSize);
+  let off = 0;
 
-  constructor(estimatedSize: number) {
-    this.buf = Buffer.allocUnsafe(estimatedSize);
+  function grow(needed: number) {
+    const newBuf = Buffer.allocUnsafe(Math.max(buf.length * 2, off + needed));
+    buf.copy(newBuf);
+    buf = newBuf;
   }
 
-  private grow(needed: number) {
-    const newBuf = Buffer.allocUnsafe(
-      Math.max(this.buf.length * 2, this.off + needed),
-    );
-    this.buf.copy(newBuf);
-    this.buf = newBuf;
+  function uint8(v: number) {
+    if (off + 1 > buf.length) grow(1);
+    buf[off++] = v;
   }
 
-  uint8(v: number) {
-    if (this.off + 1 > this.buf.length) this.grow(1);
-    this.buf[this.off++] = v;
+  function uint32(v: number) {
+    if (off + 4 > buf.length) grow(4);
+    buf.writeUInt32LE(v, off);
+    off += 4;
   }
 
-  uint32(v: number) {
-    if (this.off + 4 > this.buf.length) this.grow(4);
-    this.buf.writeUInt32LE(v, this.off);
-    this.off += 4;
-  }
-
-  uint64(v: bigint) {
-    if (this.off + 8 > this.buf.length) this.grow(8);
-    this.buf.writeUInt32LE(Number(v & 0xffffffffn), this.off);
-    this.buf.writeUInt32LE(Number((v >> 32n) & 0xffffffffn), this.off + 4);
-    this.off += 8;
+  function uint64(v: bigint) {
+    if (off + 8 > buf.length) grow(8);
+    buf.writeUInt32LE(Number(v & 0xffffffffn), off);
+    buf.writeUInt32LE(Number((v >> 32n) & 0xffffffffn), off + 4);
+    off += 8;
   }
 
   // UInt64 from a number that fits in UInt32 (high 32 bits are zero).
-  uint64n(v: number) {
-    if (this.off + 8 > this.buf.length) this.grow(8);
-    this.buf.writeUInt32LE(v, this.off);
-    this.buf.writeUInt32LE(0, this.off + 4);
-    this.off += 8;
+  function uint64n(v: number) {
+    if (off + 8 > buf.length) grow(8);
+    buf.writeUInt32LE(v, off);
+    buf.writeUInt32LE(0, off + 4);
+    off += 8;
+  }
+
+  function varUInt(n: number) {
+    // Max 5 bytes for a 32-bit LEB128.
+    if (off + 5 > buf.length) grow(5);
+    while (n > 0x7f) {
+      buf[off++] = (n & 0x7f) | 0x80;
+      n >>>= 7;
+    }
+    buf[off++] = n;
   }
 
   // FixedString(N) — copies exactly src.length bytes.
-  fixed(src: Buffer) {
+  function fixed(src: Buffer) {
     const len = src.length;
-    if (this.off + len > this.buf.length) this.grow(len);
-    src.copy(this.buf, this.off);
-    this.off += len;
+    if (off + len > buf.length) grow(len);
+    src.copy(buf, off);
+    off += len;
   }
 
   // ClickHouse String — LEB128 length prefix followed by raw bytes.
-  string(src: Buffer) {
-    this.varUInt(src.length);
-    this.fixed(src);
+  function string(src: Buffer) {
+    varUInt(src.length);
+    fixed(src);
   }
 
-  nullableUint64(v: bigint | null) {
+  function nullableUint64(v: bigint | null) {
     if (v === null) {
-      this.uint8(1);
+      uint8(1);
     } else {
-      this.uint8(0);
-      this.uint64(v);
+      uint8(0);
+      uint64(v);
     }
   }
 
-  nullableUint64n(v: number | null) {
+  function nullableUint64n(v: number | null) {
     if (v === null) {
-      this.uint8(1);
+      uint8(1);
     } else {
-      this.uint8(0);
-      this.uint64n(v);
+      uint8(0);
+      uint64n(v);
     }
   }
 
-  nullableFixed(src: Buffer | null) {
+  function nullableFixed(src: Buffer | null) {
     if (src === null) {
-      this.uint8(1);
+      uint8(1);
     } else {
-      this.uint8(0);
-      this.fixed(src);
+      uint8(0);
+      fixed(src);
     }
   }
 
-  nullableString(src: Buffer | null) {
+  function nullableString(src: Buffer | null) {
     if (src === null) {
-      this.uint8(1);
+      uint8(1);
     } else {
-      this.uint8(0);
-      this.string(src);
+      uint8(0);
+      string(src);
     }
   }
 
-  private varUInt(n: number) {
-    // Max 5 bytes for a 32-bit LEB128.
-    if (this.off + 5 > this.buf.length) this.grow(5);
-    while (n > 0x7f) {
-      this.buf[this.off++] = (n & 0x7f) | 0x80;
-      n >>>= 7;
-    }
-    this.buf[this.off++] = n;
+  function result(): Buffer {
+    return buf.subarray(0, off);
   }
 
-  result(): Buffer {
-    return this.buf.subarray(0, this.off);
-  }
+  return {
+    uint8,
+    uint32,
+    uint64,
+    uint64n,
+    fixed,
+    string,
+    nullableUint64,
+    nullableUint64n,
+    nullableFixed,
+    nullableString,
+    result,
+  };
 }
 
 // ── Serialization ───────────────────────────────────────────────────────────
 
 export function serializeBatch(rows: LogRow[]): Buffer {
-  const w = new RowBinaryWriter(rows.length * 200);
+  const w = createWriter(rows.length * 200);
   for (const row of rows) {
     w.uint32(row.chain_id);
     w.uint64n(row.block_number);
@@ -198,7 +206,7 @@ export function serializeBatch(rows: LogRow[]): Buffer {
 }
 
 export function serializeBlockBatch(rows: BlockRow[]): Buffer {
-  const w = new RowBinaryWriter(rows.length * 1000);
+  const w = createWriter(rows.length * 1000);
   for (const row of rows) {
     w.uint32(row.chain_id);
     w.uint64n(row.number);
@@ -234,7 +242,7 @@ export function serializeBlockBatch(rows: BlockRow[]): Buffer {
 }
 
 export function serializeTxHashBatch(rows: TxHashRow[]): Buffer {
-  const w = new RowBinaryWriter(rows.length * 44);
+  const w = createWriter(rows.length * 44);
   for (const row of rows) {
     w.uint32(row.chain_id);
     w.uint64(row.transaction_id);
