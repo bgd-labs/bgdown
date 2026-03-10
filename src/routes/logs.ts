@@ -8,6 +8,7 @@ import {
   fetchStats,
   MAX_LIMIT,
 } from "../clickhouse";
+import { decodeCursor } from "../utils/cursor";
 import { hexCol, nullableHexCol, select } from "../utils/sql";
 
 const Log = t.Object({
@@ -58,14 +59,11 @@ const LOG_SELECT = select(
   nullableHexCol("topic3"),
 );
 
-function decodeCursor(cursor: string): {
+function decodeLogCursor(cursor: string): {
   blockNumber: number;
   logIndex: number;
 } {
-  const [blockNumber, logIndex] = Buffer.from(cursor, "base64url")
-    .toString()
-    .split(":")
-    .map(Number);
+  const [blockNumber, logIndex] = decodeCursor(cursor).split(":").map(Number);
   return { blockNumber: blockNumber ?? 0, logIndex: logIndex ?? 0 };
 }
 
@@ -218,7 +216,7 @@ export const logRoutes = new Elysia()
     "/logs",
     async function* ({ params, query }) {
       const limit = clampLimit(query.limit);
-      const cursor = query.cursor ? decodeCursor(query.cursor) : null;
+      const cursor = query.cursor ? decodeLogCursor(query.cursor) : null;
 
       const topicHex = query.topic.slice(2).padStart(64, "0");
       const emitterHex = (query.emitter ?? query.address)

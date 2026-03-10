@@ -7,6 +7,7 @@ import {
   fetchStats,
   MAX_LIMIT,
 } from "../clickhouse";
+import { decodeCursor, encodeCursor } from "../utils/cursor";
 import {
   hexCol,
   nullableHexCol,
@@ -123,11 +124,11 @@ const BLOCK_SELECT = select(
 );
 
 function encodeBlockCursor(blockNumber: number): string {
-  return Buffer.from(`${blockNumber}`).toString("base64url");
+  return encodeCursor(`${blockNumber}`);
 }
 
 function decodeBlockCursor(cursor: string): number {
-  return Number(Buffer.from(cursor, "base64url").toString());
+  return Number(decodeCursor(cursor));
 }
 
 function rowToBlock(row: BlockQueryRow): typeof Block.static {
