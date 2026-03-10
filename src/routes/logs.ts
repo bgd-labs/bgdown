@@ -68,78 +68,64 @@ function decodeLogCursor(cursor: string): {
 }
 
 // Block hashes and tx hashes are immutable once finalized — safe to cache.
-const blockHashCache = new LRUCache<string, string>({ max: 50_000 });
-const txHashCache = new LRUCache<string, string>({ max: 200_000 });
-
-async function fetchBlockHashes(
-  chainId: string,
-  blockNumbers: string[],
-): Promise<Map<string, string>> {
-  try {
-    if (blockNumbers.length === 0) return new Map();
+function createHashLookup(opts: {
+  maxSize: number;
+  query: string;
+  keyParam: string;
+  keyField: string;
+  label: string;
+}): (chainId: string, keys: string[]) => Promise<Map<string, string>> {
+  const cache = new LRUCache<string, string>({ max: opts.maxSize });
+  return async (chainId, keys) => {
+    if (keys.length === 0) return new Map();
     const out = new Map<string, string>();
     const missing: string[] = [];
-    for (const num of blockNumbers) {
-      const cached = blockHashCache.get(`${chainId}:${num}`);
-      if (cached !== undefined) out.set(num, cached);
-      else missing.push(num);
+    for (const key of keys) {
+      const cached = cache.get(`${chainId}:${key}`);
+      if (cached !== undefined) out.set(key, cached);
+      else missing.push(key);
     }
     if (missing.length > 0) {
-      const result = await clickhouse.query({
-        query: `SELECT toString(number) AS num, concat('0x', lower(hex(hash))) AS hash_hex
-                FROM ethereum.blocks
-                WHERE chain_id = {chainId: UInt32} AND number IN ({nums: Array(UInt64)})`,
-        query_params: { chainId, nums: missing.map(Number) },
-        format: "JSONEachRow",
-      });
-      const rows = await result.json<{ num: string; hash_hex: string }>();
-      for (const r of rows) {
-        blockHashCache.set(`${chainId}:${r.num}`, r.hash_hex);
-        out.set(r.num, r.hash_hex);
+      try {
+        const result = await clickhouse.query({
+          query: opts.query,
+          query_params: { chainId, [opts.keyParam]: missing.map(Number) },
+          format: "JSONEachRow",
+        });
+        const rows = await result.json<{ key: string; hash_hex: string }>();
+        for (const r of rows) {
+          cache.set(`${chainId}:${r.key}`, r.hash_hex);
+          out.set(r.key, r.hash_hex);
+        }
+      } catch (err) {
+        throw new Error(
+          `${opts.label} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
     return out;
-  } catch (err) {
-    throw new Error(
-      `fetchBlockHashes failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
+  };
 }
 
-async function fetchTxHashes(
-  chainId: string,
-  txIds: string[],
-): Promise<Map<string, string>> {
-  try {
-    if (txIds.length === 0) return new Map();
-    const out = new Map<string, string>();
-    const missing: string[] = [];
-    for (const tid of txIds) {
-      const cached = txHashCache.get(`${chainId}:${tid}`);
-      if (cached !== undefined) out.set(tid, cached);
-      else missing.push(tid);
-    }
-    if (missing.length > 0) {
-      const result = await clickhouse.query({
-        query: `SELECT toString(transaction_id) AS tid, concat('0x', lower(hex(transaction_hash))) AS hash_hex
-                FROM ethereum.transaction_hashes
-                WHERE chain_id = {chainId: UInt32} AND transaction_id IN ({tids: Array(UInt64)})`,
-        query_params: { chainId, tids: missing.map(Number) },
-        format: "JSONEachRow",
-      });
-      const rows = await result.json<{ tid: string; hash_hex: string }>();
-      for (const r of rows) {
-        txHashCache.set(`${chainId}:${r.tid}`, r.hash_hex);
-        out.set(r.tid, r.hash_hex);
-      }
-    }
-    return out;
-  } catch (err) {
-    throw new Error(
-      `fetchTxHashes failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
+const fetchBlockHashes = createHashLookup({
+  maxSize: 50_000,
+  query: `SELECT toString(number) AS key, concat('0x', lower(hex(hash))) AS hash_hex
+          FROM ethereum.blocks
+          WHERE chain_id = {chainId: UInt32} AND number IN ({nums: Array(UInt64)})`,
+  keyParam: "nums",
+  keyField: "key",
+  label: "fetchBlockHashes",
+});
+
+const fetchTxHashes = createHashLookup({
+  maxSize: 200_000,
+  query: `SELECT toString(transaction_id) AS key, concat('0x', lower(hex(transaction_hash))) AS hash_hex
+          FROM ethereum.transaction_hashes
+          WHERE chain_id = {chainId: UInt32} AND transaction_id IN ({tids: Array(UInt64)})`,
+  keyParam: "tids",
+  keyField: "key",
+  label: "fetchTxHashes",
+});
 
 async function enrichLogs(
   chainId: string,

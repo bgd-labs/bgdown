@@ -98,26 +98,49 @@ function blockToRow(block: Block, chainId: number): BlockRow {
   };
 }
 
+// @clickhouse/client doesn't expose RowBinary as an insert format, so we
+// use the HTTP interface directly. RowBinary is ~2× faster than JSON and
+// lets us store hashes/addresses as true binary rather than hex strings.
+function flushRowBinary(
+  insertSql: string,
+  label: string,
+): (batch: Buffer, log: pino.Logger) => Promise<void> {
+  const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.${insertSql} FORMAT RowBinary`)}`;
+  const credentials = btoa(
+    `${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`,
+  );
+  return async (data, log) => {
+    const res = await fetch(url, {
+      method: "POST",
+      body: new Uint8Array(data),
+      headers: { Authorization: `Basic ${credentials}` },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      log.error(
+        { status: res.status, body },
+        `ClickHouse ${label} insert failed`,
+      );
+      throw new Error(
+        `ClickHouse ${label} insert failed [${res.status}]: ${body}`,
+      );
+    }
+  };
+}
+
+const insertBlock = flushRowBinary("blocks", "block");
+const insertLog = flushRowBinary(
+  "logs (chain_id, block_number, timestamp, transaction_id, transaction_index, log_index, address, data, topic0, topic1, topic2, topic3, removed)",
+  "log",
+);
+const insertTxHash = flushRowBinary("transaction_hashes", "tx_hash");
+
 export async function flushBlockBatch(
   batch: BlockRow[],
   log: pino.Logger,
 ): Promise<void> {
   if (batch.length === 0) return;
-  const data = serializeBlockBatch(batch);
-  const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.blocks FORMAT RowBinary`)}`;
-  const credentials = btoa(
-    `${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`,
-  );
-  const res = await fetch(url, {
-    method: "POST",
-    body: new Uint8Array(data),
-    headers: { Authorization: `Basic ${credentials}` },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    log.error({ status: res.status, body }, "ClickHouse block insert failed");
-    throw new Error(`ClickHouse block insert failed [${res.status}]: ${body}`);
-  }
+  await insertBlock(serializeBlockBatch(batch), log);
 }
 
 export async function getChainState(
@@ -142,24 +165,7 @@ export async function flushLogBatch(
   log: pino.Logger,
 ): Promise<void> {
   if (batch.length === 0) return;
-  const data = serializeBatch(batch);
-  // @clickhouse/client doesn't expose RowBinary as an insert format, so we
-  // use the HTTP interface directly. RowBinary is ~2× faster than JSON and
-  // lets us store hashes/addresses as true binary rather than hex strings.
-  const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.logs (chain_id, block_number, timestamp, transaction_id, transaction_index, log_index, address, data, topic0, topic1, topic2, topic3, removed) FORMAT RowBinary`)}`;
-  const credentials = btoa(
-    `${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`,
-  );
-  const res = await fetch(url, {
-    method: "POST",
-    body: new Uint8Array(data),
-    headers: { Authorization: `Basic ${credentials}` },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    log.error({ status: res.status, body }, "ClickHouse insert failed");
-    throw new Error(`ClickHouse insert failed [${res.status}]: ${body}`);
-  }
+  await insertLog(serializeBatch(batch), log);
 }
 
 export async function flushTxHashBatch(
@@ -167,23 +173,7 @@ export async function flushTxHashBatch(
   log: pino.Logger,
 ): Promise<void> {
   if (batch.length === 0) return;
-  const data = serializeTxHashBatch(batch);
-  const url = `${env.CLICKHOUSE_URL}/?query=${encodeURIComponent(`INSERT INTO ${env.CLICKHOUSE_DB}.transaction_hashes FORMAT RowBinary`)}`;
-  const credentials = btoa(
-    `${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`,
-  );
-  const res = await fetch(url, {
-    method: "POST",
-    body: new Uint8Array(data),
-    headers: { Authorization: `Basic ${credentials}` },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    log.error({ status: res.status, body }, "ClickHouse tx_hash insert failed");
-    throw new Error(
-      `ClickHouse tx_hash insert failed [${res.status}]: ${body}`,
-    );
-  }
+  await insertTxHash(serializeTxHashBatch(batch), log);
 }
 
 export class Flusher<T> {
