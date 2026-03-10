@@ -2,14 +2,11 @@ import { createClient } from "@clickhouse/client";
 import type pino from "pino";
 import env from "./env";
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 interface Migration {
   name: string;
   up: (client: ReturnType<typeof createClient>) => Promise<void>;
 }
 
-// ── Migration registry ───────────────────────────────────────────────────────
 //
 // Add new migrations here in order. The name must be unique and should match
 // the filename so it is easy to find. Numbers are purely for ordering.
@@ -44,8 +41,6 @@ const migrations: Migration[] = [
     up: (await import("./migrations/0007_reorder_sort_key")).up,
   },
 ];
-
-// ── Runner ───────────────────────────────────────────────────────────────────
 
 export async function runMigrations(log: pino.Logger): Promise<void> {
   // Connect to the `default` database first so we can create our target DB
