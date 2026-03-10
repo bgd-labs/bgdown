@@ -8,6 +8,7 @@ import {
   fetchStats,
   MAX_LIMIT,
 } from "../clickhouse";
+import { hexCol, nullableHexCol, select } from "../utils/sql";
 
 const Log = t.Object({
   address: t.String({
@@ -43,19 +44,19 @@ interface LogQueryRow {
   topic3_hex: string | null;
 }
 
-const LOG_SELECT = `
-  block_number,
-  timestamp,
-  transaction_id,
-  transaction_index,
-  log_index,
-  concat('0x', lower(hex(address)))                                           AS address_hex,
-  concat('0x', lower(hex(data)))                                              AS data_hex,
-  concat('0x', lower(hex(topic0)))                                            AS topic0_hex,
-  if(isNull(topic1), NULL, concat('0x', lower(hex(assumeNotNull(topic1))))) AS topic1_hex,
-  if(isNull(topic2), NULL, concat('0x', lower(hex(assumeNotNull(topic2))))) AS topic2_hex,
-  if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex
-`;
+const LOG_SELECT = select(
+  "block_number",
+  "timestamp",
+  "transaction_id",
+  "transaction_index",
+  "log_index",
+  hexCol("address"),
+  hexCol("data"),
+  hexCol("topic0"),
+  nullableHexCol("topic1"),
+  nullableHexCol("topic2"),
+  nullableHexCol("topic3"),
+);
 
 function decodeCursor(cursor: string): {
   blockNumber: number;

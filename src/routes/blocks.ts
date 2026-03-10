@@ -7,6 +7,13 @@ import {
   fetchStats,
   MAX_LIMIT,
 } from "../clickhouse";
+import {
+  hexCol,
+  nullableHexCol,
+  nullableStrCol,
+  select,
+  strCol,
+} from "../utils/sql";
 
 const Block = t.Object({
   number: t.Number({ description: "Block number" }),
@@ -84,36 +91,36 @@ interface BlockQueryRow {
   send_root_hex: string | null;
 }
 
-const BLOCK_SELECT = `
-  number,
-  concat('0x', lower(hex(hash)))                  AS hash_hex,
-  concat('0x', lower(hex(parent_hash)))            AS parent_hash_hex,
-  toString(nonce)                                  AS nonce,
-  concat('0x', lower(hex(sha3_uncles)))            AS sha3_uncles_hex,
-  concat('0x', lower(hex(logs_bloom)))             AS logs_bloom_hex,
-  concat('0x', lower(hex(transactions_root)))      AS transactions_root_hex,
-  concat('0x', lower(hex(state_root)))             AS state_root_hex,
-  concat('0x', lower(hex(receipts_root)))          AS receipts_root_hex,
-  concat('0x', lower(hex(miner)))                  AS miner_hex,
-  toString(difficulty)                             AS difficulty,
-  total_difficulty,
-  concat('0x', lower(hex(extra_data)))             AS extra_data_hex,
-  toString(size)                                   AS size,
-  toString(gas_limit)                              AS gas_limit,
-  toString(gas_used)                               AS gas_used,
-  timestamp,
-  if(isNull(base_fee_per_gas), NULL, toString(assumeNotNull(base_fee_per_gas))) AS base_fee_per_gas,
-  if(isNull(blob_gas_used), NULL, toString(assumeNotNull(blob_gas_used)))       AS blob_gas_used,
-  if(isNull(excess_blob_gas), NULL, toString(assumeNotNull(excess_blob_gas)))   AS excess_blob_gas,
-  if(isNull(parent_beacon_block_root), NULL, concat('0x', lower(hex(assumeNotNull(parent_beacon_block_root))))) AS parent_beacon_block_root_hex,
-  if(isNull(withdrawals_root), NULL, concat('0x', lower(hex(assumeNotNull(withdrawals_root)))))                 AS withdrawals_root_hex,
-  withdrawals,
-  uncles,
-  concat('0x', lower(hex(mix_hash)))               AS mix_hash_hex,
-  if(isNull(l1_block_number), NULL, toString(assumeNotNull(l1_block_number))) AS l1_block_number,
-  send_count,
-  if(isNull(send_root), NULL, concat('0x', lower(hex(assumeNotNull(send_root))))) AS send_root_hex
-`;
+const BLOCK_SELECT = select(
+  "number",
+  hexCol("hash"),
+  hexCol("parent_hash"),
+  strCol("nonce"),
+  hexCol("sha3_uncles"),
+  hexCol("logs_bloom"),
+  hexCol("transactions_root"),
+  hexCol("state_root"),
+  hexCol("receipts_root"),
+  hexCol("miner"),
+  strCol("difficulty"),
+  "total_difficulty",
+  hexCol("extra_data"),
+  strCol("size"),
+  strCol("gas_limit"),
+  strCol("gas_used"),
+  "timestamp",
+  nullableStrCol("base_fee_per_gas"),
+  nullableStrCol("blob_gas_used"),
+  nullableStrCol("excess_blob_gas"),
+  nullableHexCol("parent_beacon_block_root"),
+  nullableHexCol("withdrawals_root"),
+  "withdrawals",
+  "uncles",
+  hexCol("mix_hash"),
+  nullableStrCol("l1_block_number"),
+  "send_count",
+  nullableHexCol("send_root"),
+);
 
 function encodeBlockCursor(blockNumber: number): string {
   return Buffer.from(`${blockNumber}`).toString("base64url");
