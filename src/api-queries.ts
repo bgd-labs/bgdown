@@ -4,8 +4,6 @@ import { t } from "elysia";
 import { LRUCache } from "lru-cache";
 import env from "./env";
 
-// ── ClickHouse client ───────────────────────────────────────────────────────
-
 export const clickhouse = createClient({
   url: env.CLICKHOUSE_URL,
   username: env.CLICKHOUSE_USERNAME,
@@ -17,8 +15,6 @@ export const clickhouse = createClient({
   },
   request_timeout: 60_000,
 });
-
-// ── Elysia schemas ──────────────────────────────────────────────────────────
 
 export const Log = t.Object({
   address: t.String({
@@ -85,8 +81,6 @@ export const Block = t.Object({
   sendRoot: t.Nullable(t.String({ description: "Send root (Arbitrum)" })),
 });
 
-// ── Row types ───────────────────────────────────────────────────────────────
-
 export interface LogQueryRow {
   block_number: string;
   timestamp: string;
@@ -131,8 +125,6 @@ export interface BlockQueryRow {
   send_count: string | null;
   send_root_hex: string | null;
 }
-
-// ── SQL select templates ────────────────────────────────────────────────────
 
 export const BLOCK_SELECT = `
   number,
@@ -181,16 +173,12 @@ export const LOG_SELECT = `
   if(isNull(topic3), NULL, concat('0x', lower(hex(assumeNotNull(topic3))))) AS topic3_hex
 `;
 
-// ── Constants ───────────────────────────────────────────────────────────────
-
 export const DEFAULT_LIMIT = 1_000;
 export const MAX_LIMIT = 1_000_000;
 
 export function clampLimit(limit: number | undefined): number {
   return Math.min(limit ?? DEFAULT_LIMIT, MAX_LIMIT);
 }
-
-// ── Cursor helpers ──────────────────────────────────────────────────────────
 
 export function decodeCursor(cursor: string): {
   blockNumber: number;
@@ -210,8 +198,6 @@ export function encodeBlockCursor(blockNumber: number): string {
 export function decodeBlockCursor(cursor: string): number {
   return Number(Buffer.from(cursor, "base64url").toString());
 }
-
-// ── Hash lookups (with LRU cache) ───────────────────────────────────────────
 
 // Block hashes and tx hashes are immutable once finalized — safe to cache.
 const blockHashCache = new LRUCache<string, string>({ max: 50_000 });
@@ -289,8 +275,6 @@ async function fetchTxHashes(
   }
 }
 
-// ── Row enrichment / conversion ─────────────────────────────────────────────
-
 // Enrich raw log rows with block_hash and transaction_hash via parallel lookups.
 export async function enrichLogs(
   chainId: string,
@@ -355,8 +339,6 @@ export function rowToBlock(row: BlockQueryRow): typeof Block.static {
     sendRoot: row.send_root_hex,
   };
 }
-
-// ── Shared route helpers ────────────────────────────────────────────────────
 
 export async function fetchHeight(
   table: "logs" | "blocks",

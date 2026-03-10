@@ -23,8 +23,6 @@ export const LOG_FLUSH_BATCH_SIZE = 250_000;
 export const BLOCK_FLUSH_BATCH_SIZE = 50_000;
 const FLUSH_INTERVAL_MS = 10_000;
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
 function buildTimestampMap(blocks: Block[]): Map<number, number> {
   const map = new Map<number, number>();
   for (const block of blocks) {
@@ -99,8 +97,6 @@ function blockToRow(block: Block, chainId: number): BlockRow {
     send_root: block.sendRoot ? hexBuf(block.sendRoot, 32) : null,
   };
 }
-
-// ── ClickHouse flush functions ──────────────────────────────────────────────
 
 export async function flushBlockBatch(
   batch: BlockRow[],
@@ -190,8 +186,6 @@ export async function flushTxHashBatch(
   }
 }
 
-// ── Flusher ─────────────────────────────────────────────────────────────────
-
 export class Flusher<T> {
   private batch: T[] = [];
   private lastFlushAt = Date.now();
@@ -259,8 +253,6 @@ export class Flusher<T> {
     if (this.flushError) throw this.flushError;
   }
 }
-
-// ── Stream ──────────────────────────────────────────────────────────────────
 
 type RunStreamConfig = {
   hypersync: HypersyncClient;

@@ -97,8 +97,6 @@ export const CHAIN_BY_ID: ReadonlyMap<number, ChainConfig> = new Map(
   CHAINS.map((c) => [c.id, toChainConfig(c)]),
 );
 
-// ── Per-chain client caches ───────────────────────────────────────────────────
-
 const viemCache = new Map<number, ReturnType<typeof createPublicClient>>();
 const hypersyncCache = new Map<number, HypersyncClient>();
 
