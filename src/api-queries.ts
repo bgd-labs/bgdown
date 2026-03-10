@@ -87,7 +87,7 @@ export const Block = t.Object({
 
 // ── Row types ───────────────────────────────────────────────────────────────
 
-export interface LogRow {
+export interface LogQueryRow {
   block_number: string;
   timestamp: string;
   transaction_id: string; // UInt64 as decimal string
@@ -101,7 +101,7 @@ export interface LogRow {
   topic3_hex: string | null;
 }
 
-export interface BlockRow {
+export interface BlockQueryRow {
   number: string;
   hash_hex: string;
   parent_hash_hex: string;
@@ -294,7 +294,7 @@ async function fetchTxHashes(
 // Enrich raw log rows with block_hash and transaction_hash via parallel lookups.
 export async function enrichLogs(
   chainId: string,
-  rows: LogRow[],
+  rows: LogQueryRow[],
 ): Promise<(typeof Log.static)[]> {
   const blockNums = [...new Set(rows.map((r) => r.block_number))];
   const txIds = [...new Set(rows.map((r) => r.transaction_id))];
@@ -323,7 +323,7 @@ export async function enrichLogs(
   });
 }
 
-export function rowToBlock(row: BlockRow): typeof Block.static {
+export function rowToBlock(row: BlockQueryRow): typeof Block.static {
   return {
     number: Number(row.number),
     hash: row.hash_hex,

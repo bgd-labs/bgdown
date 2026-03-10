@@ -5,7 +5,7 @@ import { rateLimit } from "elysia-rate-limit";
 import {
   BLOCK_SELECT,
   Block,
-  type BlockRow,
+  type BlockQueryRow,
   clampLimit,
   clickhouse,
   DEFAULT_LIMIT,
@@ -17,7 +17,7 @@ import {
   fetchStats,
   LOG_SELECT,
   Log,
-  type LogRow,
+  type LogQueryRow,
   MAX_LIMIT,
   rowToBlock,
 } from "./api-queries";
@@ -239,7 +239,7 @@ new Elysia()
                 for await (const chunk of result.stream()) {
                   const logs = await enrichLogs(
                     params.chainId,
-                    chunk.map((r) => r.json<LogRow>()),
+                    chunk.map((r) => r.json<LogQueryRow>()),
                   );
                   yield sse({
                     data: logs,
@@ -319,7 +319,7 @@ new Elysia()
                   format: "JSONEachRow",
                 });
 
-                const rows = await result.json<LogRow>();
+                const rows = await result.json<LogQueryRow>();
                 if (rows.length === 0) return status(404, "Log not found");
 
                 const [log] = await enrichLogs(params.chainId, rows);
@@ -366,7 +366,7 @@ new Elysia()
                   format: "JSONEachRow",
                 });
 
-                const rows = await result.json<BlockRow>();
+                const rows = await result.json<BlockQueryRow>();
                 const blocks = rows.map(rowToBlock);
 
                 const lastRow = rows.at(-1);
@@ -425,7 +425,7 @@ new Elysia()
                   format: "JSONEachRow",
                 });
 
-                const rows = await result.json<BlockRow>();
+                const rows = await result.json<BlockQueryRow>();
                 if (rows.length === 0) return status(404, "Block not found");
 
                 return rowToBlock(rows[0]);
