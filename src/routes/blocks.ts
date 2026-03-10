@@ -1,6 +1,14 @@
-import { t } from "elysia";
+import { Elysia, t } from "elysia";
+import {
+  clampLimit,
+  clickhouse,
+  DEFAULT_LIMIT,
+  fetchHeight,
+  fetchStats,
+  MAX_LIMIT,
+} from "../clickhouse";
 
-export const Block = t.Object({
+const Block = t.Object({
   number: t.Number({ description: "Block number" }),
   hash: t.String({ description: "Block hash" }),
   parentHash: t.String({ description: "Parent block hash" }),
@@ -45,7 +53,7 @@ export const Block = t.Object({
   sendRoot: t.Nullable(t.String({ description: "Send root (Arbitrum)" })),
 });
 
-export interface BlockQueryRow {
+interface BlockQueryRow {
   number: string;
   hash_hex: string;
   parent_hash_hex: string;
@@ -76,7 +84,7 @@ export interface BlockQueryRow {
   send_root_hex: string | null;
 }
 
-export const BLOCK_SELECT = `
+const BLOCK_SELECT = `
   number,
   concat('0x', lower(hex(hash)))                  AS hash_hex,
   concat('0x', lower(hex(parent_hash)))            AS parent_hash_hex,
@@ -107,15 +115,15 @@ export const BLOCK_SELECT = `
   if(isNull(send_root), NULL, concat('0x', lower(hex(assumeNotNull(send_root))))) AS send_root_hex
 `;
 
-export function encodeBlockCursor(blockNumber: number): string {
+function encodeBlockCursor(blockNumber: number): string {
   return Buffer.from(`${blockNumber}`).toString("base64url");
 }
 
-export function decodeBlockCursor(cursor: string): number {
+function decodeBlockCursor(cursor: string): number {
   return Number(Buffer.from(cursor, "base64url").toString());
 }
 
-export function rowToBlock(row: BlockQueryRow): typeof Block.static {
+function rowToBlock(row: BlockQueryRow): typeof Block.static {
   return {
     number: Number(row.number),
     hash: row.hash_hex,
@@ -147,3 +155,144 @@ export function rowToBlock(row: BlockQueryRow): typeof Block.static {
     sendRoot: row.send_root_hex,
   };
 }
+
+export const blockRoutes = new Elysia()
+  .get(
+    "/blocks/height",
+    async ({ params }) => ({
+      height: await fetchHeight("blocks", params.chainId),
+    }),
+    {
+      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
+      response: {
+        200: t.Object({
+          height: t.Number({
+            description: "Last indexed block number",
+          }),
+        }),
+      },
+    },
+  )
+  .get(
+    "/blocks/stats",
+    async ({ params }) => fetchStats("blocks", params.chainId),
+    {
+      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
+      response: {
+        200: t.Object({
+          total: t.Number({
+            description: "Total number of indexed blocks",
+          }),
+          maxIndexedBlock: t.Number({
+            description: "Highest block number indexed",
+          }),
+          compressedSize: t.String({
+            description: "Compressed size of the blocks table on disk",
+          }),
+          compressionRatio: t.Number({
+            description: "Uncompressed / compressed ratio",
+          }),
+        }),
+      },
+    },
+  )
+  .get(
+    "/blocks",
+    async ({ params, query }) => {
+      const limit = clampLimit(query.limit);
+      const cursor = query.cursor ? decodeBlockCursor(query.cursor) : null;
+
+      const cursorClause = cursor ? "AND number > {cursorBlock: UInt64}" : "";
+
+      const result = await clickhouse.query({
+        query: `
+          SELECT ${BLOCK_SELECT}
+          FROM ethereum.blocks
+          WHERE chain_id = {chainId: UInt32}
+            ${cursorClause}
+          ORDER BY number
+          LIMIT {limit: UInt32}
+        `,
+        query_params: {
+          chainId: params.chainId,
+          limit,
+          ...(cursor ? { cursorBlock: cursor } : {}),
+        },
+        format: "JSONEachRow",
+      });
+
+      const rows = await result.json<BlockQueryRow>();
+      const blocks = rows.map(rowToBlock);
+
+      const lastRow = rows.at(-1);
+      const nextCursor =
+        rows.length === limit && lastRow
+          ? encodeBlockCursor(Number(lastRow.number))
+          : null;
+
+      return { blocks, nextCursor };
+    },
+    {
+      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
+      query: t.Object({
+        cursor: t.Optional(
+          t.String({
+            description:
+              "Opaque pagination cursor from the previous response's nextCursor",
+            examples: ["MTAwMDA"],
+          }),
+        ),
+        limit: t.Optional(
+          t.Numeric({
+            description: `Number of blocks to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
+            examples: [100],
+          }),
+        ),
+      }),
+      response: {
+        200: t.Object({
+          blocks: t.Array(Block),
+          nextCursor: t.Nullable(
+            t.String({
+              description:
+                "Pass as cursor in the next request to fetch the following page; null when no more results",
+            }),
+          ),
+        }),
+      },
+    },
+  )
+  .get(
+    "/block/:blockNumber",
+    async ({ params, status }) => {
+      const result = await clickhouse.query({
+        query: `
+          SELECT ${BLOCK_SELECT}
+          FROM ethereum.blocks
+          WHERE chain_id = {chainId: UInt32}
+            AND number = {blockNumber: UInt64}
+          LIMIT 1
+        `,
+        query_params: {
+          chainId: params.chainId,
+          blockNumber: params.blockNumber,
+        },
+        format: "JSONEachRow",
+      });
+
+      const rows = await result.json<BlockQueryRow>();
+      if (rows.length === 0) return status(404, "Block not found");
+
+      return rowToBlock(rows[0]);
+    },
+    {
+      params: t.Object({
+        chainId: t.String({ examples: ["1"] }),
+        blockNumber: t.String({ examples: ["17000000"] }),
+      }),
+      response: {
+        200: Block,
+        404: t.String(),
+      },
+    },
+  );
