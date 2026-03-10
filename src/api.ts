@@ -2,28 +2,32 @@ import { openapi } from "@elysiajs/openapi";
 import { Elysia, sse, t } from "elysia";
 import { logger } from "elysia-logger";
 import { rateLimit } from "elysia-rate-limit";
+import { tokenSet } from "./auth";
+import { CHAIN_BY_ID, getHypersyncForChain, getViemForChain } from "./chains";
+import env from "./env";
 import {
   BLOCK_SELECT,
   Block,
   type BlockQueryRow,
-  clampLimit,
-  clickhouse,
-  DEFAULT_LIMIT,
   decodeBlockCursor,
-  decodeCursor,
   encodeBlockCursor,
+  rowToBlock,
+} from "./routes/blocks";
+import {
+  decodeCursor,
   enrichLogs,
-  fetchHeight,
-  fetchStats,
   LOG_SELECT,
   Log,
   type LogQueryRow,
+} from "./routes/logs";
+import {
+  clampLimit,
+  clickhouse,
+  DEFAULT_LIMIT,
+  fetchHeight,
+  fetchStats,
   MAX_LIMIT,
-  rowToBlock,
-} from "./api-queries";
-import { tokenSet } from "./auth";
-import { CHAIN_BY_ID, getHypersyncForChain, getViemForChain } from "./chains";
-import env from "./env";
+} from "./routes/shared";
 
 new Elysia()
   .use(logger())
