@@ -99,16 +99,21 @@ export const CHAIN_BY_ID: ReadonlyMap<number, ChainConfig> = new Map(
 
 // ── Per-chain client caches ───────────────────────────────────────────────────
 
-// biome-ignore lint/suspicious/noExplicitAny: typing this is a hustle
-const viemCache = new Map<number, any>();
+const viemCache = new Map<number, ReturnType<typeof createPublicClient>>();
 const hypersyncCache = new Map<number, HypersyncClient>();
 
 export function getViemForChain(chainId: number) {
   if (!viemCache.has(chainId)) {
     const chain = CHAINS.find((c) => c.id === chainId);
-    viemCache.set(chainId, createPublicClient({ chain, transport: http() }));
+    viemCache.set(
+      chainId,
+      createPublicClient({ chain, transport: http() }) as ReturnType<
+        typeof createPublicClient
+      >,
+    );
   }
-  return viemCache.get(chainId) as ReturnType<typeof createPublicClient>;
+  // biome-ignore lint/style/noNonNullAssertion: we know it's there because we just set it if it wasn't
+  return viemCache.get(chainId)!;
 }
 
 export function getHypersyncForChain(chainId: number) {

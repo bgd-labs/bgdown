@@ -1,7 +1,7 @@
 import { createClient } from "@clickhouse/client";
 import { openapi } from "@elysiajs/openapi";
 import { all } from "better-all";
-import { Elysia, t, sse } from "elysia";
+import { Elysia, sse, t } from "elysia";
 import { logger } from "elysia-logger";
 import { rateLimit } from "elysia-rate-limit";
 import { LRUCache } from "lru-cache";
@@ -137,10 +137,6 @@ interface BlockRow {
   send_count: string | null;
   send_root_hex: string | null;
 }
-
-// function encodeCursor(blockNumber: number, logIndex: number): string {
-//   return Buffer.from(`${blockNumber}:${logIndex}`).toString("base64url");
-// }
 
 function decodeCursor(cursor: string): {
   blockNumber: number;
@@ -439,6 +435,7 @@ new Elysia()
                 },
               },
             )
+            // TODO: consider extracting shared StatsResponse schema if descriptions become identical
             .get(
               "/logs/stats",
               async ({ params }) => {
@@ -643,19 +640,6 @@ new Elysia()
                     data: logs,
                   });
                 }
-
-                // const logs = (await Promise.all(rowPromises)).flat();
-
-                // const lastLog = logs.at(-1);
-                // const nextCursor =
-                //   logs.length === limit && lastLog
-                //     ? encodeCursor(
-                //         Number(lastLog.blockNumber),
-                //         Number(lastLog.logIndex),
-                //       )
-                //     : null;
-
-                // return { logs, nextCursor };
               },
               {
                 params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
@@ -708,17 +692,6 @@ new Elysia()
                     }),
                   ),
                 }),
-                // response: {
-                //   200: t.Object({
-                //     logs: t.Array(Log),
-                //     nextCursor: t.Nullable(
-                //       t.String({
-                //         description:
-                //           "Pass as cursor in the next request to fetch the following page; null when no more results",
-                //       }),
-                //     ),
-                //   }),
-                // },
               },
             )
             .get(
