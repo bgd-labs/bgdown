@@ -1,5 +1,5 @@
 import { Elysia, sse, t } from "elysia";
-
+import { CHAIN_BY_ID } from "../chains.ts";
 import {
   clampLimit,
   clickhouse,
@@ -8,6 +8,7 @@ import {
   fetchStats,
   MAX_LIMIT,
 } from "../clickhouse.ts";
+import { getHypersyncForChain } from "../hypersync.ts";
 import { hexCol, nullableHexCol, select } from "../utils/sql.ts";
 
 const Log = t.Object({
@@ -193,6 +194,22 @@ const logsQueryParams = t.Object({
   ),
 });
 
+const CHAIN_HEIGHT_TTL = 60_000; // 60 seconds
+const chainHeightCache = new Map<
+  number,
+  { height: number; fetchedAt: number }
+>();
+
+async function getCachedChainHeight(chainId: number): Promise<number> {
+  const entry = chainHeightCache.get(chainId);
+  if (entry && Date.now() - entry.fetchedAt < CHAIN_HEIGHT_TTL) {
+    return entry.height;
+  }
+  const height = await getHypersyncForChain(chainId).getHeight();
+  chainHeightCache.set(chainId, { height, fetchedAt: Date.now() });
+  return height;
+}
+
 export const logRoutes = new Elysia()
   .get(
     "/logs/height",
@@ -212,7 +229,18 @@ export const logRoutes = new Elysia()
   )
   .get(
     "/logs/stats",
-    async ({ params }) => fetchStats("logs", params.chainId),
+    async ({ params }) => {
+      const stats = await fetchStats("logs", params.chainId);
+      const numericChainId = Number(params.chainId);
+      const chainTip = await getCachedChainHeight(numericChainId);
+      const reorgSafetyFallback =
+        CHAIN_BY_ID.get(numericChainId)?.reorgSafetyFallback ?? 64;
+      const safeTarget = chainTip - reorgSafetyFallback;
+      const raw =
+        safeTarget > 0 ? (stats.maxIndexedBlock / safeTarget) * 100 : 0;
+      const progress = raw > 99 ? 100 : Math.round(raw * 100) / 100;
+      return { ...stats, progress };
+    },
     {
       params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       response: {
@@ -228,6 +256,9 @@ export const logRoutes = new Elysia()
           }),
           compressionRatio: t.Number({
             description: "Uncompressed / compressed ratio",
+          }),
+          progress: t.Number({
+            description: "Percentage of chain blocks indexed (0\u2013100)",
           }),
         }),
       },
