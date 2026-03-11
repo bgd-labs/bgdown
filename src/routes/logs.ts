@@ -1,5 +1,5 @@
 import { Elysia, sse, t } from "elysia";
-import { LRUCache } from "lru-cache";
+
 import {
   clampLimit,
   clickhouse,
@@ -33,7 +33,8 @@ const Log = t.Object({
 interface LogQueryRow {
   block_number: string;
   timestamp: string;
-  transaction_id: string;
+  block_hash_hex: string;
+  transaction_hash_hex: string;
   transaction_index: string;
   log_index: string;
   address_hex: string;
@@ -47,7 +48,8 @@ interface LogQueryRow {
 const LOG_SELECT = select(
   "block_number",
   "timestamp",
-  "transaction_id",
+  hexCol("block_hash"),
+  hexCol("transaction_hash"),
   "transaction_index",
   "log_index",
   hexCol("address"),
@@ -66,76 +68,7 @@ function decodeLogCursor(cursor: string): {
   return { blockNumber: blockNumber ?? 0, logIndex: logIndex ?? 0 };
 }
 
-// Block hashes and tx hashes are immutable once finalized — safe to cache.
-function createHashLookup(opts: {
-  maxSize: number;
-  query: string;
-  keyParam: string;
-  keyField: string;
-  label: string;
-}): (chainId: string, keys: string[]) => Promise<Map<string, string>> {
-  const cache = new LRUCache<string, string>({ max: opts.maxSize });
-  return async (chainId, keys) => {
-    if (keys.length === 0) return new Map();
-    const out = new Map<string, string>();
-    const missing: string[] = [];
-    for (const key of keys) {
-      const cached = cache.get(`${chainId}:${key}`);
-      if (cached !== undefined) out.set(key, cached);
-      else missing.push(key);
-    }
-    if (missing.length > 0) {
-      try {
-        const result = await clickhouse.query({
-          query: opts.query,
-          query_params: { chainId, [opts.keyParam]: missing.map(Number) },
-          format: "JSONEachRow",
-        });
-        const rows = await result.json<{ key: string; hash_hex: string }>();
-        for (const r of rows) {
-          cache.set(`${chainId}:${r.key}`, r.hash_hex);
-          out.set(r.key, r.hash_hex);
-        }
-      } catch (err) {
-        throw new Error(
-          `${opts.label} failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-    return out;
-  };
-}
-
-const fetchBlockHashes = createHashLookup({
-  maxSize: 50_000,
-  query: `SELECT toString(number) AS key, concat('0x', lower(hex(hash))) AS hash_hex
-          FROM ethereum.blocks
-          WHERE chain_id = {chainId: UInt32} AND number IN ({nums: Array(UInt64)})`,
-  keyParam: "nums",
-  keyField: "key",
-  label: "fetchBlockHashes",
-});
-
-const fetchTxHashes = createHashLookup({
-  maxSize: 200_000,
-  query: `SELECT toString(transaction_id) AS key, concat('0x', lower(hex(transaction_hash))) AS hash_hex
-          FROM ethereum.transaction_hashes
-          WHERE chain_id = {chainId: UInt32} AND transaction_id IN ({tids: Array(UInt64)})`,
-  keyParam: "tids",
-  keyField: "key",
-  label: "fetchTxHashes",
-});
-
-async function enrichLogs(
-  chainId: string,
-  rows: LogQueryRow[],
-): Promise<(typeof Log.static)[]> {
-  const blockNums = [...new Set(rows.map((r) => r.block_number))];
-  const txIds = [...new Set(rows.map((r) => r.transaction_id))];
-  const [blockHashes, txHashes] = await Promise.all([
-    fetchBlockHashes(chainId, blockNums),
-    fetchTxHashes(chainId, txIds),
-  ]);
+function formatLogs(rows: LogQueryRow[]): (typeof Log.static)[] {
   return rows.map((row) => {
     const topics = [
       row.topic0_hex,
@@ -145,13 +78,13 @@ async function enrichLogs(
     ].filter((t): t is string => t !== null && t !== "");
     return {
       address: row.address_hex,
-      blockHash: blockHashes.get(String(row.block_number)) ?? "0x",
+      blockHash: row.block_hash_hex,
       blockNumber: Number(row.block_number),
       timestamp: Number(row.timestamp),
       data: row.data_hex,
       logIndex: Number(row.log_index),
       topics,
-      transactionHash: txHashes.get(String(row.transaction_id)) ?? "0x",
+      transactionHash: row.transaction_hash_hex,
       transactionIndex: Number(row.transaction_index),
     };
   });
@@ -255,10 +188,7 @@ export const logRoutes = new Elysia()
       });
 
       for await (const chunk of result.stream()) {
-        const logs = await enrichLogs(
-          params.chainId,
-          chunk.map((r) => r.json<LogQueryRow>()),
-        );
+        const logs = formatLogs(chunk.map((r) => r.json<LogQueryRow>()));
         yield sse({
           data: logs,
         });
@@ -339,7 +269,7 @@ export const logRoutes = new Elysia()
       const rows = await result.json<LogQueryRow>();
       if (rows.length === 0) return status(404, "Log not found");
 
-      const [log] = await enrichLogs(params.chainId, rows);
+      const [log] = formatLogs(rows);
       return log;
     },
     {
