@@ -8,7 +8,6 @@ import {
   fetchStats,
   MAX_LIMIT,
 } from "../clickhouse.ts";
-import { decodeCursor } from "../utils/cursor.ts";
 import { hexCol, nullableHexCol, select } from "../utils/sql.ts";
 
 const Log = t.Object({
@@ -63,7 +62,7 @@ function decodeLogCursor(cursor: string): {
   blockNumber: number;
   logIndex: number;
 } {
-  const [blockNumber, logIndex] = decodeCursor(cursor).split(":").map(Number);
+  const [blockNumber, logIndex] = cursor.split("-").map(Number);
   return { blockNumber: blockNumber ?? 0, logIndex: logIndex ?? 0 };
 }
 
@@ -304,9 +303,8 @@ export const logRoutes = new Elysia()
         ),
         cursor: t.Optional(
           t.String({
-            description:
-              "Opaque pagination cursor from the previous response's nextCursor",
-            examples: ["MTAwMDAwMDA6MA"],
+            description: "Pagination cursor in the format blockNumber-logIndex",
+            examples: ["18000000-0"],
           }),
         ),
         limit: t.Optional(
