@@ -23,6 +23,21 @@ export function select(...cols: string[]): string {
   return `\n  ${cols.join(",\n  ")}\n`;
 }
 
+export const RAW_LOG_SELECT = select(
+  "block_number AS blockNumber",
+  "timestamp",
+  hexCol("block_hash", "blockHash"),
+  hexCol("transaction_hash", "transactionHash"),
+  "transaction_index AS transactionIndex",
+  "log_index AS logIndex",
+  hexCol("address", "address"),
+  hexCol("data", "data"),
+  hexCol("topic0", "topic0"),
+  nullableHexCol("topic1", "topic1"),
+  nullableHexCol("topic2", "topic2"),
+  nullableHexCol("topic3", "topic3"),
+);
+
 const SCHEMA = new arrow.Schema([
   new arrow.Field("chain_id", new arrow.Uint32(), false),
   new arrow.Field("block_number", new arrow.Uint64(), false),

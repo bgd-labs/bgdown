@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { Elysia, sse, t } from "elysia";
 import { CHAIN_BY_ID } from "../chains.ts";
 import {
@@ -9,7 +10,12 @@ import {
   MAX_LIMIT,
 } from "../clickhouse.ts";
 import { getHypersyncForChain } from "../hypersync.ts";
-import { hexCol, nullableHexCol, select } from "../utils/sql.ts";
+import {
+  hexCol,
+  nullableHexCol,
+  RAW_LOG_SELECT,
+  select,
+} from "../utils/sql.ts";
 
 const Log = t.Object({
   address: t.String({
@@ -175,6 +181,13 @@ const streamQueryParams = t.Object({
       description: "Last block to include (inclusive).",
     }),
   ),
+  output: t.Optional(
+    t.Union([t.Literal("json"), t.Literal("parquet")], {
+      default: "json",
+      description:
+        "Response format. json=SSE (default). parquet streams binary Parquet directly from ClickHouse.",
+    }),
+  ),
 });
 
 const logsQueryParams = t.Object({
@@ -331,6 +344,33 @@ export const logRoutes = new Elysia()
     {
       params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       query: streamQueryParams,
+      // @ts-expect-error Elysia beforeHandle types don't account for raw Response short-circuiting
+      beforeHandle: async ({ params, query }) => {
+        const output = query.output ?? "json";
+        if (output === "json") return;
+
+        const { query: sql, query_params } = buildLogsQuery({
+          chainId: params.chainId,
+          ...query,
+        });
+
+        const parquetSql = sql.replace(LOG_SELECT, RAW_LOG_SELECT);
+
+        const result = await clickhouse.exec({
+          query: `${parquetSql} FORMAT Parquet`,
+          query_params,
+        });
+
+        return new Response(
+          Readable.toWeb(result.stream) as unknown as ReadableStream,
+          {
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "Content-Disposition": "attachment; filename=logs.parquet",
+            },
+          },
+        );
+      },
       response: {
         200: t.Object({
           data: t.Array(Log, {
