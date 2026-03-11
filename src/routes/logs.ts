@@ -1,4 +1,3 @@
-import { Readable } from "node:stream";
 import { Elysia, sse, t } from "elysia";
 import { CHAIN_BY_ID } from "../chains.ts";
 import {
@@ -361,15 +360,19 @@ export const logRoutes = new Elysia()
           query_params,
         });
 
-        return new Response(
-          Readable.toWeb(result.stream) as unknown as ReadableStream,
-          {
-            headers: {
-              "Content-Type": "application/octet-stream",
-              "Content-Disposition": "attachment; filename=logs.parquet",
-            },
+        const chunks: Buffer[] = [];
+        for await (const chunk of result.stream) {
+          chunks.push(Buffer.from(chunk));
+        }
+        const buf = Buffer.concat(chunks);
+        console.log("parquet response:", buf.length, "bytes");
+
+        return new Response(buf, {
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": "attachment; filename=logs.parquet",
           },
-        );
+        });
       },
       response: {
         200: t.Object({
