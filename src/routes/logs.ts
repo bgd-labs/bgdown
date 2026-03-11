@@ -97,7 +97,7 @@ function buildLogsQuery(opts: {
   fromBlock?: number;
   toBlock?: number;
   cursor?: string;
-  limit: number;
+  limit?: number;
 }) {
   const topicHex = opts.topic.slice(2).padStart(64, "0");
   const addressHex = opts.address?.toLowerCase().slice(2).padStart(40, "0");
@@ -125,12 +125,12 @@ function buildLogsQuery(opts: {
         ${upperClause}
         ${addressClause}
       ORDER BY block_number, log_index
-      LIMIT {limit: UInt32}
+      ${opts.limit !== undefined ? "LIMIT {limit: UInt32}" : ""}
     `,
     query_params: {
       chainId: opts.chainId,
       topicHex,
-      limit: opts.limit,
+      ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
       ...(cursor
         ? {
             cursorBlock: cursor.blockNumber,
@@ -146,7 +146,7 @@ function buildLogsQuery(opts: {
   };
 }
 
-const logsQueryParams = t.Object({
+const streamQueryParams = t.Object({
   topic: t.String({
     description:
       "Event signature hash (topic0) — required, maps directly to the primary index",
@@ -161,28 +161,34 @@ const logsQueryParams = t.Object({
     }),
   ),
   fromBlock: t.Optional(
-    t.Numeric({
+    t.Integer({
+      minimum: 0,
       description:
         "First block to include (inclusive). Ignored when cursor is provided.",
-      examples: [18_000_000],
+      examples: [1_000_000],
     }),
   ),
   toBlock: t.Optional(
-    t.Numeric({
+    t.Integer({
+      minimum: 0,
       description: "Last block to include (inclusive).",
-      examples: [18_001_000],
     }),
   ),
+});
+
+const logsQueryParams = t.Object({
+  ...streamQueryParams.properties,
   cursor: t.Optional(
     t.String({
       description: "Pagination cursor in the format blockNumber-logIndex",
-      examples: ["18000000-0"],
     }),
   ),
   limit: t.Optional(
-    t.Numeric({
+    t.Integer({
+      minimum: 1,
+      maximum: MAX_LIMIT,
       description: `Number of logs to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
-      examples: [100],
+      examples: [10_000],
     }),
   ),
 });
@@ -273,11 +279,9 @@ export const logRoutes = new Elysia()
   .get(
     "/logs/stream",
     async function* ({ params, query }) {
-      const limit = clampLimit(query.limit);
       const { query: sql, query_params } = buildLogsQuery({
         chainId: params.chainId,
         ...query,
-        limit,
       });
 
       const result = await clickhouse.query({
@@ -295,7 +299,7 @@ export const logRoutes = new Elysia()
     },
     {
       params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
-      query: logsQueryParams,
+      query: streamQueryParams,
     },
   )
   .get(
