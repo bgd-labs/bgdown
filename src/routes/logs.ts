@@ -300,6 +300,13 @@ export const logRoutes = new Elysia()
     {
       params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       query: streamQueryParams,
+      response: {
+        200: t.Object({
+          data: t.Array(Log, {
+            description: "SSE stream where each event contains a batch of logs",
+          }),
+        }),
+      },
     },
   )
   .get(
