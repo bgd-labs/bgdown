@@ -8,6 +8,7 @@ import {
   writeParquet,
 } from "parquet-wasm";
 import type pino from "pino";
+import prettyBytes from "pretty-bytes";
 import type { parseHyperSyncResponse } from "../validator.ts";
 
 export function hexCol(col: string, alias?: string): string {
@@ -204,12 +205,8 @@ export function createDbWriter({
       WRITER_PROPS,
     );
 
-    logger.info({ ms: (performance.now() - t0).toFixed(1) }, "build parquet");
-
     const buf = Buffer.from(parquetBytes);
-    logger.info(
-      `Sending ${n} events (${(buf.length / 1024).toFixed(2)} KB) to ClickHouse...`,
-    );
+    logger.info({ ms: (performance.now() - t0).toFixed(1) }, "build parquet");
 
     const stream = new PassThrough();
     stream.end(buf);
@@ -226,7 +223,7 @@ export function createDbWriter({
     });
     logger.info(
       { ms: (performance.now() - t1).toFixed(1) },
-      "clickhouse insert",
+      `Sent ${n} events (${prettyBytes(buf.length)}) to ClickHouse`,
     );
   };
 }

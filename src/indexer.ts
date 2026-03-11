@@ -81,7 +81,10 @@ try {
         onEvents: async (items) => {
           const t0 = performance.now();
           const validatedEvents = parseHyperSyncResponse(items);
-          logger.info({ ms: (performance.now() - t0).toFixed(1) }, "schema validation");
+          logger.info(
+            { ms: (performance.now() - t0).toFixed(1) },
+            "schema validation",
+          );
           await queue.enqueue(validatedEvents);
         },
       });
