@@ -9,12 +9,7 @@ import {
   MAX_LIMIT,
 } from "../clickhouse.ts";
 import { getHypersyncForChain } from "../hypersync.ts";
-import {
-  hexCol,
-  nullableHexCol,
-  RAW_LOG_SELECT,
-  select,
-} from "../utils/sql.ts";
+import { hexCol, nullableHexCol, select } from "../utils/sql.ts";
 
 const Log = t.Object({
   address: t.String({
@@ -74,7 +69,7 @@ function decodeLogCursor(cursor: string): {
   return { blockNumber: blockNumber ?? 0, logIndex: logIndex ?? 0 };
 }
 
-function formatLogs(rows: LogQueryRow[]): (typeof Log.static)[] {
+export function formatLogs(rows: LogQueryRow[]): (typeof Log.static)[] {
   return rows.map((row) => {
     const topics = [
       row.topic0_hex,
@@ -96,7 +91,7 @@ function formatLogs(rows: LogQueryRow[]): (typeof Log.static)[] {
   });
 }
 
-function buildLogsQuery(opts: {
+export function buildLogsQuery(opts: {
   chainId: string;
   topic: string;
   address?: string;
@@ -178,13 +173,6 @@ const streamQueryParams = t.Object({
     t.Integer({
       minimum: 0,
       description: "Last block to include (inclusive).",
-    }),
-  ),
-  output: t.Optional(
-    t.Union([t.Literal("json"), t.Literal("parquet")], {
-      default: "json",
-      description:
-        "Response format. json=SSE (default). parquet streams binary Parquet directly from ClickHouse.",
     }),
   ),
 });
@@ -331,49 +319,58 @@ export const logRoutes = new Elysia()
         query: sql,
         query_params,
         format: "JSONEachRow",
+        clickhouse_settings: {
+          max_threads: 2,
+        },
       });
 
-      for await (const chunk of result.stream()) {
-        const logs = formatLogs(chunk.map((r) => r.json<LogQueryRow>()));
+      let lastMemoryLogTime = Date.now();
+      let totalLogs = 0;
+
+      for await (const rows of result.stream()) {
+        const now = Date.now();
+        if (now - lastMemoryLogTime >= 10_000) {
+          const memoryMB = Math.round(
+            process.memoryUsage().heapUsed / 1024 / 1024,
+          );
+          console.log(
+            `[SSE Stream] Processed ${totalLogs.toLocaleString()} logs | Memory usage: ${memoryMB}MB`,
+          );
+          lastMemoryLogTime = now;
+        }
+
+        // const logs: any[] = [];
+
+        // for (const row of rows) {
+        //   const r = row.json<string[]>();
+        //   const topics: string[] = [];
+        //   if (r[8]) topics.push(r[8]);
+        //   if (r[9]) topics.push(r[9]);
+        //   if (r[10]) topics.push(r[10]);
+        //   if (r[11]) topics.push(r[11]);
+
+        //   logs.push({
+        //     address: r[6],
+        //     blockHash: r[2],
+        //     blockNumber: Number(r[0]),
+        //     timestamp: Number(r[1]),
+        //     data: r[7],
+        //     logIndex: Number(r[5]),
+        //     topics,
+        //     transactionHash: r[3],
+        //     transactionIndex: Number(r[4]),
+        //   });
+        // }
+
+        totalLogs += rows.length;
         yield sse({
-          data: logs,
+          data: rows.map((row) => row.json()),
         });
       }
     },
     {
       params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       query: streamQueryParams,
-      // @ts-expect-error Elysia beforeHandle types don't account for raw Response short-circuiting
-      beforeHandle: async ({ params, query }) => {
-        const output = query.output ?? "json";
-        if (output === "json") return;
-
-        const { query: sql, query_params } = buildLogsQuery({
-          chainId: params.chainId,
-          ...query,
-        });
-
-        const parquetSql = sql.replace(LOG_SELECT, RAW_LOG_SELECT);
-
-        const result = await clickhouse.exec({
-          query: `${parquetSql} FORMAT Parquet`,
-          query_params,
-        });
-
-        const chunks: Buffer[] = [];
-        for await (const chunk of result.stream) {
-          chunks.push(Buffer.from(chunk));
-        }
-        const buf = Buffer.concat(chunks);
-        console.log("parquet response:", buf.length, "bytes");
-
-        return new Response(buf, {
-          headers: {
-            "Content-Type": "application/octet-stream",
-            "Content-Disposition": "attachment; filename=logs.parquet",
-          },
-        });
-      },
       response: {
         200: t.Object({
           data: t.Array(Log, {

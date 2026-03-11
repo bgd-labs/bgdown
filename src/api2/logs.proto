@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package logs.v1;
+
+message Log {
+  string address = 1;
+  string block_hash = 2;
+  uint64 block_number = 3;
+  uint64 timestamp = 4;
+  string data = 5;
+  uint32 log_index = 6;
+  repeated string topics = 7;
+  string transaction_hash = 8;
+  uint32 transaction_index = 9;
+}
+
+message StreamLogsRequest {
+  string chain_id = 1;
+  string topic = 2;
+  optional string address = 3;
+  optional uint64 from_block = 4;
+  optional uint64 to_block = 5;
+}
+
+message StreamLogsResponse {
+  repeated Log logs = 1;
+}
+
+service LogService {
+  rpc StreamLogs(StreamLogsRequest) returns (stream StreamLogsResponse) {}
+}

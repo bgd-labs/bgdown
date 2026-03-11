@@ -1,12 +1,7 @@
 import { PassThrough } from "node:stream";
 import type { createClient } from "@clickhouse/client";
 import * as arrow from "apache-arrow";
-import {
-  Compression,
-  Table as WasmTable,
-  WriterPropertiesBuilder,
-  writeParquet,
-} from "parquet-wasm";
+import * as parquet from "parquet-wasm";
 import type pino from "pino";
 import prettyBytes from "pretty-bytes";
 import type { parseHyperSyncResponse } from "../validator.ts";
@@ -55,8 +50,8 @@ const SCHEMA = new arrow.Schema([
   new arrow.Field("removed", new arrow.Uint8(), false),
 ]);
 
-const WRITER_PROPS = new WriterPropertiesBuilder()
-  .setCompression(Compression.UNCOMPRESSED)
+const WRITER_PROPS = new parquet.WriterPropertiesBuilder()
+  .setCompression(parquet.Compression.UNCOMPRESSED)
   .build();
 
 export function createDbWriter({
@@ -215,8 +210,8 @@ export function createDbWriter({
     );
 
     const ipc = arrow.tableToIPC(new arrow.Table(batch), "stream");
-    const parquetBytes = writeParquet(
-      WasmTable.fromIPCStream(ipc),
+    const parquetBytes = parquet.writeParquet(
+      parquet.Table.fromIPCStream(ipc),
       WRITER_PROPS,
     );
 

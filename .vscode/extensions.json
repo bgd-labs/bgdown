@@ -1,6 +1,7 @@
 {
     "recommendations": [
         "typescriptteam.native-preview",
-        "biomejs.biome"
+        "biomejs.biome",
+        "zxh404.vscode-proto3"
     ]
 }
