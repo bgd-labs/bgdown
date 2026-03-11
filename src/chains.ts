@@ -1,4 +1,4 @@
-import { type Chain, createPublicClient, http } from "viem";
+import type { Chain } from "viem";
 import {
   arbitrum,
   avalanche,
@@ -94,19 +94,3 @@ function toChainConfig(chain: Chain): ChainConfig {
 export const CHAIN_BY_ID: ReadonlyMap<number, ChainConfig> = new Map(
   CHAINS.map((c) => [c.id, toChainConfig(c)]),
 );
-
-const viemCache = new Map<number, ReturnType<typeof createPublicClient>>();
-
-export function getViemForChain(chainId: number) {
-  if (!viemCache.has(chainId)) {
-    const chain = CHAINS.find((c) => c.id === chainId);
-    viemCache.set(
-      chainId,
-      createPublicClient({ chain, transport: http() }) as ReturnType<
-        typeof createPublicClient
-      >,
-    );
-  }
-  // biome-ignore lint/style/noNonNullAssertion: we know it's there because we just set it if it wasn't
-  return viemCache.get(chainId)!;
-}
