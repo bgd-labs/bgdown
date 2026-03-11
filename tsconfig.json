@@ -7,7 +7,14 @@
     "noEmit": true,
     "strict": true,
     "skipLibCheck": true,
-    "types": ["bun-types"]
+    "types": ["bun-types"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "exactOptionalPropertyTypes": true
   },
   "include": ["src/**/*"]
 }

@@ -1,6 +1,6 @@
 import { HypersyncClient } from "@envio-dev/hypersync-client";
-import { CHAIN_BY_ID } from "./chains";
-import env from "./env";
+import { CHAIN_BY_ID } from "./chains.ts";
+import env from "./env.ts";
 
 const hypersyncCache = new Map<number, HypersyncClient>();
 

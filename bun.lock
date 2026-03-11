@@ -9,13 +9,13 @@
         "@elysiajs/openapi": "^1.4.14",
         "@envio-dev/hypersync-client": "^1.1.0",
         "arkenv": "0.9.3",
-        "arktype": "^2.2.0",
         "better-all": "^0.0.7",
         "elysia": "^1.4.27",
         "elysia-logger": "^0.5.2",
         "elysia-rate-limit": "^4.5.0",
         "lru-cache": "^11.2.6",
         "pino": "^10.3.1",
+        "tiny-parquet": "^0.1.2",
         "viem": "^2.47.0",
       },
       "devDependencies": {
@@ -311,6 +311,8 @@
     "strtok3": ["strtok3@10.3.4", "", { "dependencies": { "@tokenizer/token": "^0.3.0" } }, "sha512-KIy5nylvC5le1OdaaoCJ07L+8iQzJHGH6pWDuzS+d07Cu7n1MZ2x26P8ZKIWfbK02+XIL8Mp4RkWeqdUCrDMfg=="],
 
     "thread-stream": ["thread-stream@4.0.0", "", { "dependencies": { "real-require": "^0.2.0" } }, "sha512-4iMVL6HAINXWf1ZKZjIPcz5wYaOdPhtO8ATvZ+Xqp3BTdaqtAwQkNmKORqcIo5YkQqGXq5cwfswDwMqqQNrpJA=="],
+
+    "tiny-parquet": ["tiny-parquet@0.1.2", "", {}, "sha512-OVVVJww0bV2fa6unwK4SJmUK8wgV9KqZsltXDnE1dAkazExhpg17L9qkJynW+HAZmx74fq+zQn/iOoyrcxiwMw=="],
 
     "to-regex-range": ["to-regex-range@5.0.1", "", { "dependencies": { "is-number": "^7.0.0" } }, "sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ=="],
 

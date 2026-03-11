@@ -7,9 +7,9 @@ import {
   fetchHeight,
   fetchStats,
   MAX_LIMIT,
-} from "../clickhouse";
-import { decodeCursor } from "../utils/cursor";
-import { hexCol, nullableHexCol, select } from "../utils/sql";
+} from "../clickhouse.ts";
+import { decodeCursor } from "../utils/cursor.ts";
+import { hexCol, nullableHexCol, select } from "../utils/sql.ts";
 
 const Log = t.Object({
   address: t.String({
@@ -226,7 +226,7 @@ export const logRoutes = new Elysia()
       const result = await clickhouse.query({
         query: `
           SELECT ${LOG_SELECT}
-          FROM ethereum.logs
+          FROM logs
           WHERE
             chain_id = {chainId: UInt32}
             AND topic0 = unhex({topicHex: String})
@@ -324,7 +324,7 @@ export const logRoutes = new Elysia()
       const result = await clickhouse.query({
         query: `
           SELECT ${LOG_SELECT}
-          FROM ethereum.logs
+          FROM logs
           WHERE chain_id = {chainId: UInt32}
             AND block_number = {blockNumber: UInt64}
             AND log_index = {logIndex: UInt32}

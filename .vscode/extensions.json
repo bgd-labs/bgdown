@@ -1,0 +1,6 @@
+{
+    "recommendations": [
+        "typescriptteam.native-preview",
+        "biomejs.biome"
+    ]
+}

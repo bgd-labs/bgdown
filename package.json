@@ -1,9 +1,10 @@
 {
   "name": "eth-logs-downloader",
+  "type": "module",
   "version": "1.0.0",
   "scripts": {
     "reset": "docker compose down -v && docker compose up -d",
-    "ingest": "bun run src/index.ts",
+    "indexer": "bun run src/indexer.ts",
     "api": "bun run src/api.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "biome check src/",
@@ -14,13 +15,13 @@
     "@elysiajs/openapi": "^1.4.14",
     "@envio-dev/hypersync-client": "^1.1.0",
     "arkenv": "0.9.3",
-    "arktype": "^2.2.0",
     "better-all": "^0.0.7",
     "elysia": "^1.4.27",
     "elysia-logger": "^0.5.2",
     "elysia-rate-limit": "^4.5.0",
     "lru-cache": "^11.2.6",
     "pino": "^10.3.1",
+    "tiny-parquet": "^0.1.2",
     "viem": "^2.47.0"
   },
   "devDependencies": {

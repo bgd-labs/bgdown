@@ -2,13 +2,11 @@ import { openapi } from "@elysiajs/openapi";
 import { Elysia, t } from "elysia";
 import { logger } from "elysia-logger";
 import { rateLimit } from "elysia-rate-limit";
-import { tokenSet } from "./auth";
-import { CHAIN_BY_ID, getViemForChain } from "./chains";
-import { clickhouse } from "./clickhouse";
-import env from "./env";
-import { getHypersyncForChain } from "./hypersync";
-import { blockRoutes } from "./routes/blocks";
-import { logRoutes } from "./routes/logs";
+import { tokenSet } from "./auth.ts";
+import { CHAIN_BY_ID } from "./chains.ts";
+import { clickhouse } from "./clickhouse.ts";
+import env from "./env.ts";
+import { logRoutes } from "./routes/logs.ts";
 
 new Elysia()
   .use(logger())
@@ -25,7 +23,7 @@ new Elysia()
     "/chains",
     async () => {
       const result = await clickhouse.query({
-        query: "SELECT DISTINCT chain_id FROM ethereum.logs ORDER BY chain_id",
+        query: "SELECT DISTINCT chain_id FROM logs ORDER BY chain_id",
         format: "JSONEachRow",
       });
       const rows = await result.json<{ chain_id: string }>();
@@ -49,6 +47,7 @@ new Elysia()
     {
       beforeHandle: ({ query, status }) => {
         if (!tokenSet.has(query.token)) return status(401, "Unauthorized");
+        return;
       },
       query: t.Object({
         token: t.String({
@@ -72,17 +71,6 @@ new Elysia()
               "",
           }),
         )
-        .group("/:chainId", (app) =>
-          app
-            .derive(({ params }) => {
-              const chainId = Number(params.chainId);
-              return {
-                viem: getViemForChain(chainId),
-                hypersync: getHypersyncForChain(chainId),
-              };
-            })
-            .use(logRoutes)
-            .use(blockRoutes),
-        ),
+        .group("/:chainId", (app) => app.use(logRoutes)),
   )
   .listen(env.PORT);
