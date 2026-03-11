@@ -40,8 +40,8 @@ export const parseHyperSyncResponse = (events: EventResponse["data"]) => {
         32,
         transactionHashCache,
       )(log.transactionHash!),
-      transactionIndex: log.transactionIndex,
-      logIndex: log.logIndex,
+      transactionIndex: log.transactionIndex!,
+      logIndex: log.logIndex!,
       address: hexToBytes(20, addressCache)(log.address!),
       data: hexToBytes()(log.data!),
       topic0: hexToBytes(32, topic0Cache)(log.topics[0] ?? ""),
@@ -49,7 +49,7 @@ export const parseHyperSyncResponse = (events: EventResponse["data"]) => {
       topic2: log.topics[2] ? hexToBytes(32)(log.topics[2]) : undefined,
       topic3: log.topics[3] ? hexToBytes(32)(log.topics[3]) : undefined,
       removed: log.removed ? 1 : 0,
-      timestamp: block!.timestamp,
+      timestamp: block!.timestamp!,
     };
   });
 };

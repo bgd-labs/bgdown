@@ -43,72 +43,6 @@ const WRITER_PROPS = new WriterPropertiesBuilder()
   .setCompression(Compression.UNCOMPRESSED)
   .build();
 
-function fixedBinary(
-  values: (Uint8Array | undefined)[],
-  byteWidth: number,
-  nullable = false,
-): arrow.Data {
-  const count = values.length;
-  const data = new Uint8Array(count * byteWidth);
-  let nullBitmap: Uint8Array | undefined;
-  let nullCount = 0;
-
-  if (nullable) {
-    nullBitmap = new Uint8Array(Math.ceil(count / 8));
-    for (let i = 0; i < count; i++) {
-      const v = values[i];
-      if (v) {
-        data.set(v, i * byteWidth);
-        nullBitmap[i >> 3] |= 1 << (i & 7);
-      } else {
-        nullCount++;
-      }
-    }
-  } else {
-    for (let i = 0; i < count; i++) {
-      data.set(values[i]!, i * byteWidth);
-    }
-  }
-
-  return arrow.makeData({
-    type: new arrow.FixedSizeBinary(byteWidth),
-    length: count,
-    nullCount,
-    nullBitmap,
-    data,
-  });
-}
-
-function varBinary(values: Uint8Array[]): arrow.Data {
-  const count = values.length;
-  const valueOffsets = new Int32Array(count + 1);
-  let total = 0;
-  for (let i = 0; i < count; i++) {
-    valueOffsets[i] = total;
-    total += values[i].length;
-  }
-  valueOffsets[count] = total;
-
-  const data = new Uint8Array(total);
-  for (let i = 0; i < count; i++) {
-    data.set(values[i], valueOffsets[i]);
-  }
-
-  return arrow.makeData({
-    type: new arrow.Binary(),
-    length: count,
-    valueOffsets,
-    data,
-  });
-}
-
-const u8 = (data: Uint8Array, n: number) =>
-  arrow.makeData({ type: new arrow.Uint8(), length: n, data });
-const u32 = (data: Uint32Array, n: number) =>
-  arrow.makeData({ type: new arrow.Uint32(), length: n, data });
-const u64 = (data: BigUint64Array, n: number) =>
-  arrow.makeData({ type: new arrow.Uint64(), length: n, data });
-
 export function createDbWriter({
   clickhouse,
   logger,
@@ -121,37 +55,76 @@ export function createDbWriter({
   return async (events: ReturnType<typeof parseHyperSyncResponse>) => {
     const n = events.length;
 
+    // Allocate Arrow buffers directly
     const chainIds = new Uint32Array(n).fill(chainId);
     const blockNums = new BigUint64Array(n);
+    const blockHashes = new Uint8Array(n * 32);
     const timestamps = new Uint32Array(n);
+    const txHashes = new Uint8Array(n * 32);
     const txIndices = new Uint32Array(n);
     const logIndices = new Uint32Array(n);
+    const addrs = new Uint8Array(n * 20);
+    const topic0 = new Uint8Array(n * 32);
+    const topic1 = new Uint8Array(n * 32);
+    const topic1Null = new Uint8Array(Math.ceil(n / 8));
+    let topic1NullCount = 0;
+    const topic2 = new Uint8Array(n * 32);
+    const topic2Null = new Uint8Array(Math.ceil(n / 8));
+    let topic2NullCount = 0;
+    const topic3 = new Uint8Array(n * 32);
+    const topic3Null = new Uint8Array(Math.ceil(n / 8));
+    let topic3NullCount = 0;
     const removed = new Uint8Array(n);
-    const blockHashes = new Array<Uint8Array>(n);
-    const txHashes = new Array<Uint8Array>(n);
-    const addrs = new Array<Uint8Array>(n);
-    const dataCol = new Array<Uint8Array>(n);
-    const t0s = new Array<Uint8Array>(n);
-    const t1s = new Array<Uint8Array | undefined>(n);
-    const t2s = new Array<Uint8Array | undefined>(n);
-    const t3s = new Array<Uint8Array | undefined>(n);
+
+    // Variable-length data needs two passes
+    const dataRefs = new Array<Uint8Array>(n);
+    let dataTotal = 0;
 
     for (let i = 0; i < n; i++) {
       const e = events[i];
       blockNums[i] = e.blockNumber;
-      timestamps[i] = e.timestamp!;
-      txIndices[i] = e.transactionIndex!;
-      logIndices[i] = e.logIndex!;
+      blockHashes.set(e.blockHash, i * 32);
+      timestamps[i] = e.timestamp;
+      txHashes.set(e.transactionHash, i * 32);
+      txIndices[i] = e.transactionIndex;
+      logIndices[i] = e.logIndex;
+      addrs.set(e.address, i * 20);
+      topic0.set(e.topic0, i * 32);
+
+      if (e.topic1) {
+        topic1.set(e.topic1, i * 32);
+        topic1Null[i >> 3] |= 1 << (i & 7);
+      } else {
+        topic1NullCount++;
+      }
+      if (e.topic2) {
+        topic2.set(e.topic2, i * 32);
+        topic2Null[i >> 3] |= 1 << (i & 7);
+      } else {
+        topic2NullCount++;
+      }
+      if (e.topic3) {
+        topic3.set(e.topic3, i * 32);
+        topic3Null[i >> 3] |= 1 << (i & 7);
+      } else {
+        topic3NullCount++;
+      }
+
       removed[i] = e.removed;
-      blockHashes[i] = e.blockHash;
-      txHashes[i] = e.transactionHash;
-      addrs[i] = e.address;
-      dataCol[i] = e.data;
-      t0s[i] = e.topic0;
-      t1s[i] = e.topic1;
-      t2s[i] = e.topic2;
-      t3s[i] = e.topic3;
+      dataRefs[i] = e.data;
+      dataTotal += e.data.length;
     }
+
+    // Pack variable-length data column
+    const dataOffsets = new Int32Array(n + 1);
+    const dataBytes = new Uint8Array(dataTotal);
+    let offset = 0;
+    for (let i = 0; i < n; i++) {
+      dataOffsets[i] = offset;
+      dataBytes.set(dataRefs[i], offset);
+      offset += dataRefs[i].length;
+    }
+    dataOffsets[n] = offset;
 
     console.time("build parquet");
 
@@ -161,20 +134,66 @@ export function createDbWriter({
         type: new arrow.Struct(SCHEMA.fields),
         length: n,
         children: [
-          u32(chainIds, n),
-          u64(blockNums, n),
-          fixedBinary(blockHashes, 32),
-          u32(timestamps, n),
-          fixedBinary(txHashes, 32),
-          u32(txIndices, n),
-          u32(logIndices, n),
-          fixedBinary(addrs, 20),
-          varBinary(dataCol),
-          fixedBinary(t0s, 32),
-          fixedBinary(t1s, 32, true),
-          fixedBinary(t2s, 32, true),
-          fixedBinary(t3s, 32, true),
-          u8(removed, n),
+          arrow.makeData({
+            type: new arrow.Uint32(),
+            data: chainIds,
+          }),
+          arrow.makeData({
+            type: new arrow.Uint64(),
+            data: blockNums,
+          }),
+          arrow.makeData({
+            type: new arrow.FixedSizeBinary(32),
+            data: blockHashes,
+          }),
+          arrow.makeData({
+            type: new arrow.Uint32(),
+            data: timestamps,
+          }),
+          arrow.makeData({
+            type: new arrow.FixedSizeBinary(32),
+            data: txHashes,
+          }),
+          arrow.makeData({
+            type: new arrow.Uint32(),
+            data: txIndices,
+          }),
+          arrow.makeData({
+            type: new arrow.Uint32(),
+            data: logIndices,
+          }),
+          arrow.makeData({
+            type: new arrow.FixedSizeBinary(20),
+            data: addrs,
+          }),
+          arrow.makeData({
+            type: new arrow.Binary(),
+            valueOffsets: dataOffsets,
+            data: dataBytes,
+          }),
+          arrow.makeData({
+            type: new arrow.FixedSizeBinary(32),
+            data: topic0,
+          }),
+          arrow.makeData({
+            type: new arrow.FixedSizeBinary(32),
+            nullCount: topic1NullCount,
+            nullBitmap: topic1Null,
+            data: topic1,
+          }),
+          arrow.makeData({
+            type: new arrow.FixedSizeBinary(32),
+            nullCount: topic2NullCount,
+            nullBitmap: topic2Null,
+            data: topic2,
+          }),
+          arrow.makeData({
+            type: new arrow.FixedSizeBinary(32),
+            nullCount: topic3NullCount,
+            nullBitmap: topic3Null,
+            data: topic3,
+          }),
+          arrow.makeData({ type: new arrow.Uint8(), length: n, data: removed }),
         ],
       }),
     );
