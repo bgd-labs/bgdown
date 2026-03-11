@@ -187,11 +187,15 @@ export const logRoutes = new Elysia()
         format: "JSONEachRow",
       });
 
-      for await (const chunk of result.stream()) {
-        const logs = formatLogs(chunk.map((r) => r.json<LogQueryRow>()));
-        yield sse({
-          data: logs,
-        });
+      try {
+        for await (const chunk of result.stream()) {
+          const logs = formatLogs(chunk.map((r) => r.json<LogQueryRow>()));
+          yield sse({
+            data: logs,
+          });
+        }
+      } catch (err) {
+        console.error(err);
       }
     },
     {
