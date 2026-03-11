@@ -79,9 +79,9 @@ try {
         toBlock: safeBlock,
         logger,
         onEvents: async (items) => {
-          console.time("schema validation");
+          const t0 = performance.now();
           const validatedEvents = parseHyperSyncResponse(items);
-          console.timeEnd("schema validation");
+          logger.info({ ms: (performance.now() - t0).toFixed(1) }, "schema validation");
           await queue.enqueue(validatedEvents);
         },
       });

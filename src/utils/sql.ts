@@ -126,7 +126,7 @@ export function createDbWriter({
     }
     dataOffsets[n] = offset;
 
-    console.time("build parquet");
+    const t0 = performance.now();
 
     const batch = new arrow.RecordBatch(
       SCHEMA,
@@ -204,7 +204,7 @@ export function createDbWriter({
       WRITER_PROPS,
     );
 
-    console.timeEnd("build parquet");
+    logger.info({ ms: (performance.now() - t0).toFixed(1) }, "build parquet");
 
     const buf = Buffer.from(parquetBytes);
     logger.info(
@@ -214,7 +214,7 @@ export function createDbWriter({
     const stream = new PassThrough();
     stream.end(buf);
 
-    console.time("clickhouse insert");
+    const t1 = performance.now();
     await clickhouse.insert({
       table: "logs",
       values: stream,
@@ -224,6 +224,9 @@ export function createDbWriter({
         wait_for_async_insert: 1,
       },
     });
-    console.timeEnd("clickhouse insert");
+    logger.info(
+      { ms: (performance.now() - t1).toFixed(1) },
+      "clickhouse insert",
+    );
   };
 }
