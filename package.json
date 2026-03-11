@@ -14,14 +14,15 @@
     "@clickhouse/client": "^1.10.1",
     "@elysiajs/openapi": "^1.4.14",
     "@envio-dev/hypersync-client": "^1.1.0",
+    "apache-arrow": "^21.1.0",
     "arkenv": "0.9.3",
     "better-all": "^0.0.7",
     "elysia": "^1.4.27",
     "elysia-logger": "^0.5.2",
     "elysia-rate-limit": "^4.5.0",
     "lru-cache": "^11.2.6",
+    "parquet-wasm": "^0.7.1",
     "pino": "^10.3.1",
-    "tiny-parquet": "^0.1.2",
     "viem": "^2.47.0"
   },
   "devDependencies": {
