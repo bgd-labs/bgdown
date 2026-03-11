@@ -53,6 +53,7 @@ new Elysia()
         token: t.String({
           description: "API token",
           examples: ["replace-with-secure-token"],
+          default: "",
         }),
       }),
       response: {
