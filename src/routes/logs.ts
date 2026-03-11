@@ -9,12 +9,7 @@ import {
   MAX_LIMIT,
 } from "../clickhouse.ts";
 import { getHypersyncForChain } from "../hypersync.ts";
-import {
-  hexCol,
-  nullableHexCol,
-  RAW_LOG_SELECT,
-  select,
-} from "../utils/sql.ts";
+import { hexCol, nullableHexCol, select } from "../utils/sql.ts";
 
 const Log = t.Object({
   address: t.String({
@@ -327,60 +322,43 @@ export const logRoutes = new Elysia()
         ...query,
       });
 
-      const result = await clickhouse.query({
-        query: sql,
-        query_params,
-        format: "JSONEachRow",
-      });
-
-      for await (const chunk of result.stream()) {
-        const logs = formatLogs(chunk.map((r) => r.json<LogQueryRow>()));
-        yield sse({
-          data: logs,
+      if (query.output === "parquet") {
+        const result = await clickhouse.query({
+          query: sql,
+          query_params,
+          format: "Parquet",
         });
+        for await (const chunk of result.stream()) {
+          for (const row of chunk) {
+            yield sse({
+              data: row.text,
+            });
+          }
+        }
+      } else {
+        const result = await clickhouse.query({
+          query: sql,
+          query_params,
+          format: "JSONEachRow",
+        });
+        for await (const chunk of result.stream()) {
+          const logs = formatLogs(chunk.map((r) => r.json<LogQueryRow>()));
+          yield sse({
+            data: logs,
+          });
+        }
       }
     },
     {
       params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       query: streamQueryParams,
-      // @ts-expect-error Elysia beforeHandle types don't account for raw Response short-circuiting
-      beforeHandle: async ({ params, query }) => {
-        const output = query.output ?? "json";
-        if (output === "json") return;
-
-        const { query: sql, query_params } = buildLogsQuery({
-          chainId: params.chainId,
-          ...query,
-        });
-
-        const parquetSql = sql.replace(LOG_SELECT, RAW_LOG_SELECT);
-
-        const result = await clickhouse.exec({
-          query: `${parquetSql} FORMAT Parquet`,
-          query_params,
-        });
-
-        const chunks: Buffer[] = [];
-        for await (const chunk of result.stream) {
-          chunks.push(Buffer.from(chunk));
-        }
-        const buf = Buffer.concat(chunks);
-        console.log("parquet response:", buf.length, "bytes");
-
-        return new Response(buf, {
-          headers: {
-            "Content-Type": "application/octet-stream",
-            "Content-Disposition": "attachment; filename=logs.parquet",
-          },
-        });
-      },
-      response: {
-        200: t.Object({
-          data: t.Array(Log, {
-            description: "SSE stream where each event contains a batch of logs",
-          }),
-        }),
-      },
+      // response: {
+      //   200: t.Object({
+      //     data: t.Array(t.Union([Log, t.String()]), {
+      //       description: "SSE stream where each event contains a batch of logs",
+      //     }),
+      //   }),
+      // },
     },
   )
   .get(
