@@ -90,6 +90,103 @@ function formatLogs(rows: LogQueryRow[]): (typeof Log.static)[] {
   });
 }
 
+function buildLogsQuery(opts: {
+  chainId: string;
+  topic: string;
+  address?: string;
+  fromBlock?: number;
+  toBlock?: number;
+  cursor?: string;
+  limit: number;
+}) {
+  const topicHex = opts.topic.slice(2).padStart(64, "0");
+  const addressHex = opts.address?.toLowerCase().slice(2).padStart(40, "0");
+  const cursor = opts.cursor ? decodeLogCursor(opts.cursor) : null;
+
+  const lowerClause = cursor
+    ? "AND (block_number, log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
+    : opts.fromBlock !== undefined
+      ? "AND block_number >= {fromBlock: UInt64}"
+      : "";
+  const upperClause =
+    opts.toBlock !== undefined ? "AND block_number <= {toBlock: UInt64}" : "";
+  const addressClause = addressHex
+    ? "AND address = unhex({addressHex: String})"
+    : "";
+
+  return {
+    query: `
+      SELECT ${LOG_SELECT}
+      FROM logs
+      WHERE
+        chain_id = {chainId: UInt32}
+        AND topic0 = unhex({topicHex: String})
+        ${lowerClause}
+        ${upperClause}
+        ${addressClause}
+      ORDER BY block_number, log_index
+      LIMIT {limit: UInt32}
+    `,
+    query_params: {
+      chainId: opts.chainId,
+      topicHex,
+      limit: opts.limit,
+      ...(cursor
+        ? {
+            cursorBlock: cursor.blockNumber,
+            cursorLogIndex: cursor.logIndex,
+          }
+        : {}),
+      ...(opts.fromBlock !== undefined && !cursor
+        ? { fromBlock: opts.fromBlock }
+        : {}),
+      ...(opts.toBlock !== undefined ? { toBlock: opts.toBlock } : {}),
+      ...(addressHex ? { addressHex } : {}),
+    },
+  };
+}
+
+const logsQueryParams = t.Object({
+  topic: t.String({
+    description:
+      "Event signature hash (topic0) — required, maps directly to the primary index",
+    examples: [
+      "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+    ],
+  }),
+  address: t.Optional(
+    t.String({
+      description: "Alias for emitter — contract address that emitted the log",
+      examples: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
+    }),
+  ),
+  fromBlock: t.Optional(
+    t.Numeric({
+      description:
+        "First block to include (inclusive). Ignored when cursor is provided.",
+      examples: [18_000_000],
+    }),
+  ),
+  toBlock: t.Optional(
+    t.Numeric({
+      description: "Last block to include (inclusive).",
+      examples: [18_001_000],
+    }),
+  ),
+  cursor: t.Optional(
+    t.String({
+      description: "Pagination cursor in the format blockNumber-logIndex",
+      examples: ["18000000-0"],
+    }),
+  ),
+  limit: t.Optional(
+    t.Numeric({
+      description: `Number of logs to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
+      examples: [100],
+    }),
+  ),
+});
+
 export const logRoutes = new Elysia()
   .get(
     "/logs/height",
@@ -132,122 +229,73 @@ export const logRoutes = new Elysia()
   )
   .get(
     "/logs",
-    async function* ({ params, query }) {
+    async ({ params, query }) => {
       const limit = clampLimit(query.limit);
-      const cursor = query.cursor ? decodeLogCursor(query.cursor) : null;
-
-      const topicHex = query.topic.slice(2).padStart(64, "0");
-      const emitterHex = (query.emitter ?? query.address)
-        ?.toLowerCase()
-        .slice(2)
-        .padStart(40, "0");
-
-      const lowerClause = cursor
-        ? "AND (block_number, log_index) > ({cursorBlock: UInt64}, {cursorLogIndex: UInt32})"
-        : query.fromBlock !== undefined
-          ? "AND block_number >= {fromBlock: UInt64}"
-          : "";
-      const upperClause =
-        query.toBlock !== undefined
-          ? "AND block_number <= {toBlock: UInt64}"
-          : "";
-      const addressClause = emitterHex
-        ? "AND address = unhex({emitterHex: String})"
-        : "";
+      const { query: sql, query_params } = buildLogsQuery({
+        chainId: params.chainId,
+        ...query,
+        limit,
+      });
 
       const result = await clickhouse.query({
-        query: `
-          SELECT ${LOG_SELECT}
-          FROM logs
-          WHERE
-            chain_id = {chainId: UInt32}
-            AND topic0 = unhex({topicHex: String})
-            ${lowerClause}
-            ${upperClause}
-            ${addressClause}
-          ORDER BY block_number, log_index
-          LIMIT {limit: UInt32}
-        `,
-        query_params: {
-          chainId: params.chainId,
-          topicHex,
-          limit,
-          ...(cursor
-            ? {
-                cursorBlock: cursor.blockNumber,
-                cursorLogIndex: cursor.logIndex,
-              }
-            : {}),
-          ...(query.fromBlock !== undefined && !cursor
-            ? { fromBlock: query.fromBlock }
-            : {}),
-          ...(query.toBlock !== undefined ? { toBlock: query.toBlock } : {}),
-          ...(emitterHex ? { emitterHex } : {}),
-        },
+        query: sql,
+        query_params,
         format: "JSONEachRow",
       });
 
-      try {
-        for await (const chunk of result.stream()) {
-          const logs = formatLogs(chunk.map((r) => r.json<LogQueryRow>()));
-          yield sse({
-            data: logs,
-          });
-        }
-      } catch (err) {
-        console.error(err);
+      const rows = await result.json<LogQueryRow>();
+      const data = formatLogs(rows);
+
+      const lastLog = data[data.length - 1];
+      const nextCursor =
+        data.length >= limit && lastLog
+          ? `${lastLog.blockNumber}-${lastLog.logIndex}`
+          : null;
+
+      return { data, nextCursor };
+    },
+    {
+      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
+      query: logsQueryParams,
+      response: {
+        200: t.Object({
+          data: t.Array(Log),
+          nextCursor: t.Nullable(
+            t.String({
+              description:
+                "Cursor for the next page (blockNumber-logIndex), or null if this is the last page",
+            }),
+          ),
+        }),
+      },
+    },
+  )
+  .get(
+    "/logs/stream",
+    async function* ({ params, query }) {
+      const limit = clampLimit(query.limit);
+      const { query: sql, query_params } = buildLogsQuery({
+        chainId: params.chainId,
+        ...query,
+        limit,
+      });
+
+      const result = await clickhouse.query({
+        query: sql,
+        query_params,
+        format: "JSONEachRow",
+      });
+
+      for await (const chunk of result.stream()) {
+        const logs = formatLogs(chunk.map((r) => r.json<LogQueryRow>()));
+        yield sse({
+          data: logs,
+        });
       }
     },
     {
       params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
-      query: t.Object({
-        topic: t.String({
-          description:
-            "Event signature hash (topic0) — required, maps directly to the primary index",
-          examples: [
-            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-          ],
-        }),
-        emitter: t.Optional(
-          t.String({
-            description:
-              "Contract address; combined with topic for a full primary-key lookup",
-            examples: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
-          }),
-        ),
-        address: t.Optional(
-          t.String({
-            description:
-              "Alias for emitter — contract address that emitted the log",
-            examples: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
-          }),
-        ),
-        fromBlock: t.Optional(
-          t.Numeric({
-            description:
-              "First block to include (inclusive). Ignored when cursor is provided.",
-            examples: [18_000_000],
-          }),
-        ),
-        toBlock: t.Optional(
-          t.Numeric({
-            description: "Last block to include (inclusive).",
-            examples: [18_001_000],
-          }),
-        ),
-        cursor: t.Optional(
-          t.String({
-            description: "Pagination cursor in the format blockNumber-logIndex",
-            examples: ["18000000-0"],
-          }),
-        ),
-        limit: t.Optional(
-          t.Numeric({
-            description: `Number of logs to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
-            examples: [100],
-          }),
-        ),
-      }),
+      query: logsQueryParams,
     },
   )
   .get(
