@@ -6,7 +6,7 @@
     "reset": "docker compose down -v && docker compose up -d",
     "indexer": "bun run src/indexer.ts",
     "dev:indexer": "bun run --watch src/indexer.ts",
-    "api": "bun run src/api.ts",
+    "start": "bun run src/api.ts",
     "dev:api": "bun run --watch src/api.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "biome check src/",
