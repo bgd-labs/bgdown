@@ -66,6 +66,7 @@ new Elysia()
         200: t.Array(
           t.Object({
             id: t.Number({ description: "EIP-155 chain ID" }),
+            url: t.String({ description: "API URL for that chain" }),
           }),
         ),
       },
