@@ -128,8 +128,6 @@ export function createDbWriter({
     }
     dataOffsets[n] = offset;
 
-    const t0 = performance.now();
-
     const batch = new arrow.RecordBatch(
       SCHEMA,
       arrow.makeData({
@@ -207,7 +205,6 @@ export function createDbWriter({
     );
 
     const buf = Buffer.from(parquetBytes);
-    logger.info({ ms: (performance.now() - t0).toFixed(1) }, "build parquet");
 
     const stream = new PassThrough();
     stream.end(buf);

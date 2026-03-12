@@ -80,12 +80,7 @@ try {
         toBlock: safeBlock,
         logger,
         onEvents: async (items) => {
-          const t0 = performance.now();
           const validatedEvents = parseHyperSyncResponse(items);
-          logger.info(
-            { ms: (performance.now() - t0).toFixed(1) },
-            "schema validation",
-          );
           await queue.enqueue(validatedEvents);
         },
       });
@@ -109,5 +104,8 @@ try {
   }
 } catch (err) {
   pino().error(err, "fatal error");
-  process.exit(1);
+  // If running as a worker, just let the error propagate so the parent
+  // can handle it via the worker's "error" event. Only exit when running
+  // as the main thread.
+  if (Bun.isMainThread) process.exit(1);
 }
