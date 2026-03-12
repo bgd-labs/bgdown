@@ -57,6 +57,7 @@ new Elysia()
         const id = Number(chain_id);
         return {
           id,
+          url: `https://${id}.logs.bgdlabs.com`,
         };
       });
     },
