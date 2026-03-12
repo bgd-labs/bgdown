@@ -45,11 +45,8 @@ export async function fetchStats(
       SELECT
         count() AS total,
         max(${column}) AS max_block,
-        formatReadableSize(
-          (SELECT sum(data_compressed_bytes) FROM system.parts WHERE ${partsFilter} AND active AND database = currentDatabase())
-          * count() / greatest((SELECT count() FROM ${table}), 1)
-        ) AS compressed,
-        (SELECT round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) FROM system.parts WHERE ${partsFilter} AND active AND database = currentDatabase()) AS ratio
+        (SELECT formatReadableSize(sum(data_compressed_bytes)) FROM system.parts WHERE ${partsFilter} AND active) AS compressed,
+        (SELECT round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) FROM system.parts WHERE ${partsFilter} AND active) AS ratio
       FROM ${table}
       WHERE chain_id = {chainId: UInt32}
     `,
