@@ -2,9 +2,9 @@ pre-commit:
   commands:
     biome:
       glob: "src/**/*.ts"
-      run: bunx biome check --write {staged_files}
+      run: bun run biome check --write {staged_files}
       stage_fixed: true
     typecheck:
-      run: bunx tsgo --noEmit
+      run: bun run tsgo --noEmit
     knip:
-      run: bunx knip
+      run: bun run knip

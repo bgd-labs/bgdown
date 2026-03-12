@@ -11,10 +11,6 @@ export const clickhouse = createClient({
 export const DEFAULT_LIMIT = 1_000;
 export const MAX_LIMIT = 1_000_000;
 
-export function clampLimit(limit: number | undefined): number {
-  return Math.min(limit ?? DEFAULT_LIMIT, MAX_LIMIT);
-}
-
 export async function fetchHeight(
   table: "logs" | "blocks",
   chainId: (typeof SUPPORTED_CHAIN_IDS)[number],

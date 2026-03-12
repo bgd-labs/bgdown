@@ -34,21 +34,29 @@ const addressCache = new LRUCache<string, Uint8Array>({ max: 20_000 });
 export const parseHyperSyncResponse = (events: EventResponse["data"]) => {
   return events.map(({ block, log }) => {
     return {
+      // biome-ignore lint/style/noNonNullAssertion: stupid hs types
       blockNumber: BigInt(log.blockNumber!),
+      // biome-ignore lint/style/noNonNullAssertion: stupid hs types
       blockHash: hexToBytes(32, blockHashCache)(log.blockHash!),
       transactionHash: hexToBytes(
         32,
         transactionHashCache,
+        // biome-ignore lint/style/noNonNullAssertion: stupid hs types
       )(log.transactionHash!),
+      // biome-ignore lint/style/noNonNullAssertion: stupid hs types
       transactionIndex: log.transactionIndex!,
+      // biome-ignore lint/style/noNonNullAssertion: stupid hs types
       logIndex: log.logIndex!,
+      // biome-ignore lint/style/noNonNullAssertion: stupid hs types
       address: hexToBytes(20, addressCache)(log.address!),
+      // biome-ignore lint/style/noNonNullAssertion: stupid hs types
       data: hexToBytes()(log.data!),
       topic0: hexToBytes(32, topic0Cache)(log.topics[0] ?? ""),
       topic1: log.topics[1] ? hexToBytes(32)(log.topics[1]) : undefined,
       topic2: log.topics[2] ? hexToBytes(32)(log.topics[2]) : undefined,
       topic3: log.topics[3] ? hexToBytes(32)(log.topics[3]) : undefined,
       removed: log.removed ? 1 : 0,
+      // biome-ignore lint/style/noNonNullAssertion: stupid hs types
       timestamp: block!.timestamp!,
     };
   });

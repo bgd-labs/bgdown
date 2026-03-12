@@ -4,7 +4,6 @@ import { rateLimit } from "elysia-rate-limit";
 import { tokenSet } from "../auth.ts";
 import { CHAIN_BY_ID, SUPPORTED_CHAIN_IDS } from "../chains.ts";
 import {
-  clampLimit,
   clickhouse,
   DEFAULT_LIMIT,
   fetchHeight,
@@ -78,7 +77,7 @@ function decodeLogCursor(cursor: string): {
   blockNumber: number;
   logIndex: number;
 } {
-  const [blockNumber, logIndex] = cursor.split("-").map(Number);
+  const [blockNumber, logIndex] = cursor.split(":").map(Number);
   return { blockNumber: blockNumber ?? 0, logIndex: logIndex ?? 0 };
 }
 
@@ -160,7 +159,7 @@ function buildLogsQuery(opts: {
   };
 }
 
-const streamQueryParams = t.Object({
+const logsQueryParams = t.Object({
   topic: t.String({
     description:
       "Event signature hash (topic0) — required, maps directly to the primary index",
@@ -170,39 +169,34 @@ const streamQueryParams = t.Object({
   }),
   address: t.Optional(
     t.String({
-      description: "Alias for emitter — contract address that emitted the log",
+      description: "Address that emitted the log",
       examples: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
     }),
   ),
-  fromBlock: t.Optional(
-    t.Integer({
-      minimum: 0,
-      description:
-        "First block to include (inclusive). Ignored when cursor is provided.",
-      examples: [1_000_000],
-    }),
-  ),
+  fromBlock: t.Integer({
+    minimum: 0,
+    description:
+      "First block to include (inclusive). Ignored when cursor is provided.",
+    examples: [0, 1_000_000],
+    default: 0,
+  }),
   toBlock: t.Optional(
     t.Integer({
       minimum: 0,
       description: "Last block to include (inclusive).",
     }),
   ),
-});
-
-const logsQueryParams = t.Object({
-  ...streamQueryParams.properties,
+  limit: t.Integer({
+    minimum: 1,
+    maximum: MAX_LIMIT,
+    description: `Number of logs to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
+    examples: [10_000, 100_000, 1_000_000],
+    default: DEFAULT_LIMIT,
+  }),
   cursor: t.Optional(
-    t.String({
-      description: "Pagination cursor in the format blockNumber-logIndex",
-    }),
-  ),
-  limit: t.Optional(
-    t.Integer({
-      minimum: 1,
-      maximum: MAX_LIMIT,
-      description: `Number of logs to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
-      examples: [10_000],
+    t.RegExp(/^\d+:\d+$/, {
+      description: "Pagination cursor in the format blockNumber:logIndex",
+      examples: ["17000000:0"],
     }),
   ),
 });
@@ -314,11 +308,9 @@ export const logRoutes = new Elysia()
   .get(
     "/:chainId/logs",
     async ({ params, query }) => {
-      const limit = clampLimit(query.limit);
       const { query: sql, query_params } = buildLogsQuery({
         chainId: params.chainId,
         ...query,
-        limit,
       });
 
       const result = await clickhouse.query({
@@ -327,27 +319,30 @@ export const logRoutes = new Elysia()
         format: "JSONEachRow",
       });
 
-      const rows = await result.json<LogQueryRow>();
-      const data = formatLogs(rows);
+      const logs: ReturnType<typeof formatLogs> = [];
 
-      const lastLog = data[data.length - 1];
+      for await (const chunk of result.stream()) {
+        logs.push(...formatLogs(chunk.map((r) => r.json<LogQueryRow>())));
+      }
+
+      const lastLog = logs[logs.length - 1];
       const nextCursor =
-        data.length >= limit && lastLog
-          ? `${lastLog.blockNumber}-${lastLog.logIndex}`
+        logs.length >= query.limit && lastLog
+          ? `${lastLog.blockNumber}:${lastLog.logIndex}`
           : null;
 
-      return { data, nextCursor };
+      return { logs, nextCursor };
     },
     {
       params: t.Object({ chainId: supportedChainId }),
       query: logsQueryParams,
       response: {
         200: t.Object({
-          data: t.Array(Log),
+          logs: t.Array(Log),
           nextCursor: t.Nullable(
             t.String({
               description:
-                "Cursor for the next page (blockNumber-logIndex), or null if this is the last page",
+                "Cursor for the next page (blockNumber:logIndex), or null if this is the last page",
             }),
           ),
         }),
@@ -376,7 +371,7 @@ export const logRoutes = new Elysia()
       }
     },
     {
-      query: streamQueryParams,
+      query: logsQueryParams,
       params: t.Object({ chainId: supportedChainId }),
       response: {
         200: t.Object({
