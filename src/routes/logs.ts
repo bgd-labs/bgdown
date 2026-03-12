@@ -365,8 +365,13 @@ export const logRoutes = new Elysia()
 
       for await (const chunk of result.stream()) {
         const logs = formatLogs(chunk.map((r) => r.json<LogQueryRow>()));
+        const lastLog = logs[logs.length - 1];
+
+        const nextCursor = `${lastLog.blockNumber}:${lastLog.logIndex}`;
+
         yield sse({
           data: logs,
+          nextCursor,
         });
       }
     },
@@ -378,6 +383,11 @@ export const logRoutes = new Elysia()
           data: t.Array(Log, {
             description: "SSE stream where each event contains a batch of logs",
           }),
+          nextCursor: t.Nullable(
+            t.String({
+              description: "Cursor for the next page (blockNumber:logIndex)",
+            }),
+          ),
         }),
       },
     },
