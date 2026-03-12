@@ -30,12 +30,14 @@ export async function runStream({
   toBlock,
   logger,
   onEvents,
+  initialTotalLogs = 0,
 }: {
   hypersync: HypersyncClient;
   fromBlock: number;
   toBlock: number;
   logger: pino.Logger;
   onEvents: (events: EventResponse["data"]) => Promise<void>;
+  initialTotalLogs?: number;
 }) {
   const query = {
     fromBlock,
@@ -66,7 +68,7 @@ export async function runStream({
     concurrency: 20,
   });
 
-  let totalLogs = 0;
+  let totalLogs = initialTotalLogs;
 
   while (true) {
     const res = await receiver.recv();

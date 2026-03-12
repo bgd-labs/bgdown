@@ -79,6 +79,7 @@ try {
         fromBlock: startBlock,
         toBlock: safeBlock,
         logger,
+        initialTotalLogs: totalLogs,
         onEvents: async (items) => {
           const validatedEvents = parseHyperSyncResponse(items);
           await queue.enqueue(validatedEvents);
@@ -97,6 +98,7 @@ try {
         "finished streaming",
       );
 
+      totalLogs = res.totalLogs;
       startBlock = res.nextBlock;
     } catch (err) {
       logger.error(err, "error during sync iteration");
