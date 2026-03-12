@@ -41,9 +41,9 @@ new Elysia()
   .use(
     openapi({
       documentation: { info: { title: "BGDown API", version: "1.0.0" } },
+      path: "/",
     }),
   )
-  .get("/", ({ redirect }) => redirect("/openapi"))
   .get(
     "/chains",
     async () => {
