@@ -1,5 +1,8 @@
+import { all } from "better-all";
 import { Elysia, sse, t } from "elysia";
-import { CHAIN_BY_ID } from "../chains.ts";
+import { rateLimit } from "elysia-rate-limit";
+import { tokenSet } from "../auth.ts";
+import { CHAIN_BY_ID, SUPPORTED_CHAIN_IDS } from "../chains.ts";
 import {
   clampLimit,
   clickhouse,
@@ -9,12 +12,17 @@ import {
   MAX_LIMIT,
 } from "../clickhouse.ts";
 import { getHypersyncForChain } from "../hypersync.ts";
-import {
-  hexCol,
-  nullableHexCol,
-  RAW_LOG_SELECT,
-  select,
-} from "../utils/sql.ts";
+import { hexCol, nullableHexCol, select } from "../utils/sql.ts";
+
+const supportedChainId = t
+  .Transform(
+    t.UnionEnum([
+      `${SUPPORTED_CHAIN_IDS[0]}`,
+      ...SUPPORTED_CHAIN_IDS.slice(1).map((id) => `${id}`),
+    ]),
+  )
+  .Decode((v) => Number(v) as (typeof SUPPORTED_CHAIN_IDS)[number])
+  .Encode((v) => `${v}`);
 
 const Log = t.Object({
   address: t.String({
@@ -97,7 +105,7 @@ function formatLogs(rows: LogQueryRow[]): (typeof Log.static)[] {
 }
 
 function buildLogsQuery(opts: {
-  chainId: string;
+  chainId: (typeof SUPPORTED_CHAIN_IDS)[number];
   topic: string;
   address?: string;
   fromBlock?: number;
@@ -180,13 +188,6 @@ const streamQueryParams = t.Object({
       description: "Last block to include (inclusive).",
     }),
   ),
-  output: t.Optional(
-    t.Union([t.Literal("json"), t.Literal("parquet")], {
-      default: "json",
-      description:
-        "Response format. json=SSE (default). parquet streams binary Parquet directly from ClickHouse.",
-    }),
-  ),
 });
 
 const logsQueryParams = t.Object({
@@ -212,7 +213,9 @@ const chainHeightCache = new Map<
   { height: number; fetchedAt: number }
 >();
 
-async function getCachedChainHeight(chainId: number): Promise<number> {
+async function getCachedChainHeight(
+  chainId: (typeof SUPPORTED_CHAIN_IDS)[number],
+): Promise<number> {
   const entry = chainHeightCache.get(chainId);
   if (entry && Date.now() - entry.fetchedAt < CHAIN_HEIGHT_TTL) {
     return entry.height;
@@ -223,13 +226,42 @@ async function getCachedChainHeight(chainId: number): Promise<number> {
 }
 
 export const logRoutes = new Elysia()
+  .guard(
+    {
+      beforeHandle: ({ query, status }) => {
+        if (!tokenSet.has(query.token)) return status(401, "Unauthorized");
+        return;
+      },
+      query: t.Object({
+        token: t.String({
+          description: "API token",
+          examples: ["replace-with-secure-token"],
+          default: "",
+        }),
+      }),
+      response: {
+        401: t.String(),
+      },
+    },
+    (app) =>
+      app.use(
+        rateLimit({
+          max: 600,
+          duration: 60_000,
+          generator: (req) =>
+            new URL(req.url).searchParams.get("token") ??
+            req.headers.get("x-forwarded-for") ??
+            "",
+        }),
+      ),
+  )
   .get(
-    "/logs/height",
+    "/:chainId/logs/height",
     async ({ params }) => ({
       height: await fetchHeight("logs", params.chainId),
     }),
     {
-      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
+      params: t.Object({ chainId: supportedChainId }),
       response: {
         200: t.Object({
           height: t.Number({
@@ -240,21 +272,24 @@ export const logRoutes = new Elysia()
     },
   )
   .get(
-    "/logs/stats",
+    "/:chainId/logs/stats",
     async ({ params }) => {
-      const stats = await fetchStats("logs", params.chainId);
-      const numericChainId = Number(params.chainId);
-      const chainTip = await getCachedChainHeight(numericChainId);
-      const reorgSafetyFallback =
-        CHAIN_BY_ID.get(numericChainId)?.reorgSafetyFallback ?? 64;
+      const { stats, chainTip } = await all({
+        stats: () => fetchStats("logs", params.chainId),
+        chainTip: () => getCachedChainHeight(params.chainId),
+      });
+      // biome-ignore lint/style/noNonNullAssertion: validator makes sure this is a known chainId
+      const reorgSafetyFallback = CHAIN_BY_ID.get(
+        params.chainId,
+      )!.reorgSafetyFallback;
       const safeTarget = chainTip - reorgSafetyFallback;
       const raw =
         safeTarget > 0 ? (stats.maxIndexedBlock / safeTarget) * 100 : 0;
-      const progress = raw > 99 ? 100 : Math.round(raw * 100) / 100;
+      const progress = Math.round(raw * 100) / 100;
       return { ...stats, progress };
     },
     {
-      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
+      params: t.Object({ chainId: supportedChainId }),
       response: {
         200: t.Object({
           total: t.Number({
@@ -277,7 +312,7 @@ export const logRoutes = new Elysia()
     },
   )
   .get(
-    "/logs",
+    "/:chainId/logs",
     async ({ params, query }) => {
       const limit = clampLimit(query.limit);
       const { query: sql, query_params } = buildLogsQuery({
@@ -304,7 +339,7 @@ export const logRoutes = new Elysia()
       return { data, nextCursor };
     },
     {
-      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
+      params: t.Object({ chainId: supportedChainId }),
       query: logsQueryParams,
       response: {
         200: t.Object({
@@ -320,7 +355,7 @@ export const logRoutes = new Elysia()
     },
   )
   .get(
-    "/logs/stream",
+    "/:chainId/logs/stream",
     async function* ({ params, query }) {
       const { query: sql, query_params } = buildLogsQuery({
         chainId: params.chainId,
@@ -341,39 +376,8 @@ export const logRoutes = new Elysia()
       }
     },
     {
-      params: t.Object({ chainId: t.String({ examples: ["1"] }) }),
       query: streamQueryParams,
-      // @ts-expect-error Elysia beforeHandle types don't account for raw Response short-circuiting
-      beforeHandle: async ({ params, query }) => {
-        const output = query.output ?? "json";
-        if (output === "json") return;
-
-        const { query: sql, query_params } = buildLogsQuery({
-          chainId: params.chainId,
-          ...query,
-        });
-
-        const parquetSql = sql.replace(LOG_SELECT, RAW_LOG_SELECT);
-
-        const result = await clickhouse.exec({
-          query: `${parquetSql} FORMAT Parquet`,
-          query_params,
-        });
-
-        const chunks: Buffer[] = [];
-        for await (const chunk of result.stream) {
-          chunks.push(Buffer.from(chunk));
-        }
-        const buf = Buffer.concat(chunks);
-        console.log("parquet response:", buf.length, "bytes");
-
-        return new Response(buf, {
-          headers: {
-            "Content-Type": "application/octet-stream",
-            "Content-Disposition": "attachment; filename=logs.parquet",
-          },
-        });
-      },
+      params: t.Object({ chainId: supportedChainId }),
       response: {
         200: t.Object({
           data: t.Array(Log, {
@@ -384,7 +388,7 @@ export const logRoutes = new Elysia()
     },
   )
   .get(
-    "/log/:blockNumber/:logIndex",
+    "/:chainId/log/:blockNumber/:logIndex",
     async ({ params, status }) => {
       const result = await clickhouse.query({
         query: `
@@ -411,9 +415,9 @@ export const logRoutes = new Elysia()
     },
     {
       params: t.Object({
-        chainId: t.String({ examples: ["1"] }),
         blockNumber: t.String({ examples: ["17000000"] }),
         logIndex: t.String({ examples: ["0"] }),
+        chainId: supportedChainId,
       }),
       response: {
         200: Log,

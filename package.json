@@ -5,7 +5,9 @@
   "scripts": {
     "reset": "docker compose down -v && docker compose up -d",
     "indexer": "bun run src/indexer.ts",
+    "dev:indexer": "bun run --watch src/indexer.ts",
     "api": "bun run src/api.ts",
+    "dev:api": "bun run --watch src/api.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/"
@@ -17,6 +19,7 @@
     "apache-arrow": "^21.1.0",
     "arkenv": "^0.11.0",
     "arktype": "^2.2.0",
+    "better-all": "^0.0.7",
     "elysia": "^1.4.27",
     "elysia-logger": "^0.5.2",
     "elysia-rate-limit": "^4.5.0",

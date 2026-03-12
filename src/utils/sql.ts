@@ -9,6 +9,7 @@ import {
 } from "parquet-wasm";
 import type pino from "pino";
 import prettyBytes from "pretty-bytes";
+import type { SUPPORTED_CHAIN_IDS } from "../chains.ts";
 import type { parseHyperSyncResponse } from "../validator.ts";
 
 export function hexCol(col: string, alias?: string): string {
@@ -22,21 +23,6 @@ export function nullableHexCol(col: string, alias?: string): string {
 export function select(...cols: string[]): string {
   return `\n  ${cols.join(",\n  ")}\n`;
 }
-
-export const RAW_LOG_SELECT = select(
-  "block_number AS blockNumber",
-  "timestamp",
-  hexCol("block_hash", "blockHash"),
-  hexCol("transaction_hash", "transactionHash"),
-  "transaction_index AS transactionIndex",
-  "log_index AS logIndex",
-  hexCol("address", "address"),
-  hexCol("data", "data"),
-  hexCol("topic0", "topic0"),
-  nullableHexCol("topic1", "topic1"),
-  nullableHexCol("topic2", "topic2"),
-  nullableHexCol("topic3", "topic3"),
-);
 
 const SCHEMA = new arrow.Schema([
   new arrow.Field("chain_id", new arrow.Uint32(), false),
@@ -66,7 +52,7 @@ export function createDbWriter({
 }: {
   clickhouse: ReturnType<typeof createClient>;
   logger: pino.Logger;
-  chainId: number;
+  chainId: (typeof SUPPORTED_CHAIN_IDS)[number];
 }) {
   return async (events: ReturnType<typeof parseHyperSyncResponse>) => {
     const n = events.length;

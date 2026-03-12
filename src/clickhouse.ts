@@ -1,4 +1,5 @@
 import { createClient } from "@clickhouse/client";
+import type { SUPPORTED_CHAIN_IDS } from "./chains.ts";
 import env from "./env.ts";
 
 export const clickhouse = createClient({
@@ -16,7 +17,7 @@ export function clampLimit(limit: number | undefined): number {
 
 export async function fetchHeight(
   table: "logs" | "blocks",
-  chainId: string,
+  chainId: (typeof SUPPORTED_CHAIN_IDS)[number],
 ): Promise<number> {
   const column = table === "logs" ? "block_number" : "number";
   const result = await clickhouse.query({
@@ -30,7 +31,7 @@ export async function fetchHeight(
 
 export async function fetchStats(
   table: "logs" | "blocks",
-  chainId: string,
+  chainId: (typeof SUPPORTED_CHAIN_IDS)[number],
 ): Promise<{
   total: number;
   maxIndexedBlock: number;

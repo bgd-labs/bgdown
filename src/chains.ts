@@ -19,39 +19,6 @@ import {
   sonic,
 } from "viem/chains";
 
-const CHAINS = [
-  mainnet,
-  optimism,
-  bsc,
-  gnosis,
-  polygon,
-  sonic,
-  megaeth,
-  mantle,
-  base,
-  plasma,
-  arbitrum,
-  celo,
-  avalanche,
-  ink,
-  linea,
-  baseSepolia,
-  scroll,
-] satisfies Chain[];
-
-interface ChainConfig {
-  readonly id: number;
-  readonly name: string;
-  readonly hypersyncUrl: string;
-  /**
-   * How many blocks behind the HyperSync tip we stop indexing.
-   * HyperSync only surfaces finalized/safe data so this is a secondary guard,
-   * but it protects against short reorgs on chains where finality is not
-   * instant (primarily Polygon and BSC).
-   */
-  readonly reorgSafetyFallback: number;
-}
-
 // Per-chain reorg safety margins.
 // L2s with a single sequencer (Arbitrum, Base, OP, Linea, Scroll, Ink, Mantle,
 // Plasma, Base Sepolia, MegaETH, Sonic) have no L2 reorgs → 5 (small buffer
@@ -60,37 +27,43 @@ interface ChainConfig {
 // Avalanche) → 12.
 // BSC Parlia → 15.
 // Polygon (historically long reorgs) → 64.
-const REORG_FALLBACK: Partial<Record<number, number>> = {
-  1: 12, // Ethereum mainnet
-  10: 5, // Optimism
-  56: 15, // BSC
-  100: 12, // Gnosis
-  137: 64, // Polygon
-  146: 5, // Sonic
-  5000: 5, // Mantle
-  6342: 5, // MegaETH
-  8453: 5, // Base
-  42161: 5, // Arbitrum
-  42220: 12, // Celo
-  43114: 12, // Avalanche
-  57073: 5, // Ink
-  59144: 5, // Linea
-  84532: 5, // Base Sepolia
-  361: 5, // Plasma
-  534352: 5, // Scroll
-};
+const CHAINS = [
+  {
+    ...mainnet,
+    reorgSafetyFallback: 12,
+  },
+  { ...optimism, reorgSafetyFallback: 5 },
+  { ...bsc, reorgSafetyFallback: 15 },
+  { ...gnosis, reorgSafetyFallback: 12 },
+  { ...polygon, reorgSafetyFallback: 64 },
+  { ...sonic, reorgSafetyFallback: 5 },
+  { ...megaeth, reorgSafetyFallback: 5 },
+  { ...mantle, reorgSafetyFallback: 5 },
+  { ...base, reorgSafetyFallback: 5 },
+  { ...plasma, reorgSafetyFallback: 5 },
+  { ...arbitrum, reorgSafetyFallback: 5 },
+  { ...celo, reorgSafetyFallback: 12 },
+  { ...avalanche, reorgSafetyFallback: 12 },
+  { ...ink, reorgSafetyFallback: 5 },
+  { ...linea, reorgSafetyFallback: 5 },
+  { ...baseSepolia, reorgSafetyFallback: 5 },
+  { ...scroll, reorgSafetyFallback: 5 },
+] satisfies (Chain & {
+  reorgSafetyFallback: number;
+})[];
 
-const DEFAULT_REORG_FALLBACK = 64;
-
-function toChainConfig(chain: Chain): ChainConfig {
+function toChainConfig(chain: (typeof CHAINS)[number]) {
   return {
     id: chain.id,
     name: chain.name,
     hypersyncUrl: `https://${chain.id}.hypersync.xyz`,
-    reorgSafetyFallback: REORG_FALLBACK[chain.id] ?? DEFAULT_REORG_FALLBACK,
+    reorgSafetyFallback: chain.reorgSafetyFallback,
   };
 }
 
-export const CHAIN_BY_ID: ReadonlyMap<number, ChainConfig> = new Map(
-  CHAINS.map((c) => [c.id, toChainConfig(c)]),
-);
+export const CHAIN_BY_ID = new Map(CHAINS.map((c) => [c.id, toChainConfig(c)]));
+
+export const SUPPORTED_CHAIN_IDS = CHAINS.map((c) => c.id) as [
+  (typeof CHAINS)[number]["id"],
+  ...(typeof CHAINS)[number]["id"][],
+];

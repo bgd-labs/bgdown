@@ -20,15 +20,16 @@ try {
 
   await ensureSchema(logger);
 
-  const hypersync = getHypersyncForChain(env.CHAIN_ID);
+  const hypersync = getHypersyncForChain(chain.id);
 
-  let { startBlock, totalLogs } = await getChainState(clickhouse, env.CHAIN_ID);
+  let { startBlock, totalLogs } = await getChainState(clickhouse, chain.id);
+
   logger.info({ startBlock, totalLogs }, "connected, resuming ingestion");
 
   const heightStream = await hypersync.streamHeight();
 
   const queue = batchQueue(
-    createDbWriter({ clickhouse, logger, chainId: env.CHAIN_ID }),
+    createDbWriter({ clickhouse, logger, chainId: chain.id }),
     {
       batchSize: 500_000,
       timeout: 30_000,

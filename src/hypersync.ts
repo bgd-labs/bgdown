@@ -1,10 +1,12 @@
 import { HypersyncClient } from "@envio-dev/hypersync-client";
-import { CHAIN_BY_ID } from "./chains.ts";
+import { CHAIN_BY_ID, type SUPPORTED_CHAIN_IDS } from "./chains.ts";
 import env from "./env.ts";
 
 const hypersyncCache = new Map<number, HypersyncClient>();
 
-export function getHypersyncForChain(chainId: number) {
+export function getHypersyncForChain(
+  chainId: (typeof SUPPORTED_CHAIN_IDS)[number],
+) {
   if (!hypersyncCache.has(chainId)) {
     const config = CHAIN_BY_ID.get(chainId);
     hypersyncCache.set(
