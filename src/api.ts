@@ -1,3 +1,4 @@
+import { cors } from "@elysiajs/cors";
 import { openapi } from "@elysiajs/openapi";
 import { Elysia, t } from "elysia";
 import { logger } from "elysia-logger";
@@ -47,6 +48,7 @@ spawnIndexer();
 const servers = await discoverServers();
 
 new Elysia()
+  .use(cors({ origin: /logs\.bgdlabs\.com$/ }))
   .use(
     logger({
       level: env.LOG_LEVEL,
