@@ -2,6 +2,7 @@ import { openapi } from "@elysiajs/openapi";
 import { Elysia, t } from "elysia";
 import { logger } from "elysia-logger";
 import pino from "pino";
+import { CHAIN_BY_ID } from "./chains.ts";
 import { clickhouse } from "./clickhouse.ts";
 import env from "./env.ts";
 import { logRoutes } from "./routes/logs.ts";
@@ -26,7 +27,24 @@ function spawnIndexer() {
   return worker;
 }
 
+async function discoverServers() {
+  if (process.env.NODE_ENV !== "production") return [];
+  const results = await Promise.allSettled(
+    [...CHAIN_BY_ID.values()].map(async (chain) => {
+      const url = `https://${chain.id}.logs.bgdlabs.com`;
+      const r = await fetch(`${url}/spec.json`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!r.ok) throw new Error(`${r.status}`);
+      return { url, description: chain.name };
+    }),
+  );
+  return results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+}
+
 spawnIndexer();
+
+const servers = await discoverServers();
 
 new Elysia()
   .use(
@@ -40,7 +58,10 @@ new Elysia()
   })
   .use(
     openapi({
-      documentation: { info: { title: "BGDown API", version: "1.0.0" } },
+      documentation: {
+        info: { title: "BGDown API", version: "1.0.0" },
+        ...(servers.length > 0 && { servers }),
+      },
       path: "/",
       specPath: "/spec.json",
     }),
