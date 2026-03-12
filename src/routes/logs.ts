@@ -2,7 +2,7 @@ import { all } from "better-all";
 import { Elysia, sse, t } from "elysia";
 import { rateLimit } from "elysia-rate-limit";
 import { tokenSet } from "../auth.ts";
-import { CHAIN_BY_ID, SUPPORTED_CHAIN_IDS } from "../chains.ts";
+import { CHAIN_BY_ID, type SUPPORTED_CHAIN_IDS } from "../chains.ts";
 import {
   clickhouse,
   DEFAULT_LIMIT,
@@ -10,18 +10,9 @@ import {
   fetchStats,
   MAX_LIMIT,
 } from "../clickhouse.ts";
+import env from "../env.ts";
 import { getHypersyncForChain } from "../hypersync.ts";
 import { hexCol, nullableHexCol, select } from "../utils/sql.ts";
-
-const supportedChainId = t
-  .Transform(
-    t.UnionEnum([
-      `${SUPPORTED_CHAIN_IDS[0]}`,
-      ...SUPPORTED_CHAIN_IDS.slice(1).map((id) => `${id}`),
-    ]),
-  )
-  .Decode((v) => Number(v) as (typeof SUPPORTED_CHAIN_IDS)[number])
-  .Encode((v) => `${v}`);
 
 const Log = t.Object({
   address: t.String({
@@ -250,12 +241,11 @@ export const logRoutes = new Elysia()
       ),
   )
   .get(
-    "/:chainId/logs/height",
-    async ({ params }) => ({
-      height: await fetchHeight("logs", params.chainId),
+    "/logs/height",
+    async () => ({
+      height: await fetchHeight("logs", env.CHAIN_ID),
     }),
     {
-      params: t.Object({ chainId: supportedChainId }),
       response: {
         200: t.Object({
           height: t.Number({
@@ -266,15 +256,15 @@ export const logRoutes = new Elysia()
     },
   )
   .get(
-    "/:chainId/logs/stats",
-    async ({ params }) => {
+    "/logs/stats",
+    async () => {
       const { stats, chainTip } = await all({
-        stats: () => fetchStats("logs", params.chainId),
-        chainTip: () => getCachedChainHeight(params.chainId),
+        stats: () => fetchStats("logs", env.CHAIN_ID),
+        chainTip: () => getCachedChainHeight(env.CHAIN_ID),
       });
       // biome-ignore lint/style/noNonNullAssertion: validator makes sure this is a known chainId
       const reorgSafetyFallback = CHAIN_BY_ID.get(
-        params.chainId,
+        env.CHAIN_ID,
       )!.reorgSafetyFallback;
       const safeTarget = chainTip - reorgSafetyFallback;
       const raw =
@@ -283,7 +273,6 @@ export const logRoutes = new Elysia()
       return { ...stats, progress };
     },
     {
-      params: t.Object({ chainId: supportedChainId }),
       response: {
         200: t.Object({
           total: t.Number({
@@ -306,10 +295,10 @@ export const logRoutes = new Elysia()
     },
   )
   .get(
-    "/:chainId/logs",
-    async ({ params, query }) => {
+    "/logs",
+    async ({ query }) => {
       const { query: sql, query_params } = buildLogsQuery({
-        chainId: params.chainId,
+        chainId: env.CHAIN_ID,
         ...query,
       });
 
@@ -334,7 +323,6 @@ export const logRoutes = new Elysia()
       return { logs, nextCursor };
     },
     {
-      params: t.Object({ chainId: supportedChainId }),
       query: logsQueryParams,
       response: {
         200: t.Object({
@@ -350,10 +338,10 @@ export const logRoutes = new Elysia()
     },
   )
   .get(
-    "/:chainId/logs/stream",
-    async function* ({ params, query }) {
+    "/logs/stream",
+    async function* ({ query }) {
       const { query: sql, query_params } = buildLogsQuery({
-        chainId: params.chainId,
+        chainId: env.CHAIN_ID,
         ...query,
       });
 
@@ -377,7 +365,6 @@ export const logRoutes = new Elysia()
     },
     {
       query: logsQueryParams,
-      params: t.Object({ chainId: supportedChainId }),
       response: {
         200: t.Object({
           data: t.Array(Log, {
@@ -393,7 +380,7 @@ export const logRoutes = new Elysia()
     },
   )
   .get(
-    "/:chainId/log/:blockNumber/:logIndex",
+    "/log/:blockNumber/:logIndex",
     async ({ params, status }) => {
       const result = await clickhouse.query({
         query: `
@@ -405,7 +392,6 @@ export const logRoutes = new Elysia()
           LIMIT 1
         `,
         query_params: {
-          chainId: params.chainId,
           blockNumber: params.blockNumber,
           logIndex: params.logIndex,
         },
@@ -422,7 +408,6 @@ export const logRoutes = new Elysia()
       params: t.Object({
         blockNumber: t.String({ examples: ["17000000"] }),
         logIndex: t.String({ examples: ["0"] }),
-        chainId: supportedChainId,
       }),
       response: {
         200: Log,
