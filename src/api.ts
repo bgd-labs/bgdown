@@ -42,6 +42,7 @@ new Elysia()
     openapi({
       documentation: { info: { title: "BGDown API", version: "1.0.0" } },
       path: "/",
+      specPath: "/spec.json",
     }),
   )
   .get(
