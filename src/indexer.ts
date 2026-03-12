@@ -88,8 +88,6 @@ try {
       // flush the remaining items in the queue
       await queue.flush();
 
-      startBlock = res.nextBlock;
-
       logger.info(
         {
           fromBlock: startBlock,
@@ -98,6 +96,8 @@ try {
         },
         "finished streaming",
       );
+
+      startBlock = res.nextBlock;
     } catch (err) {
       logger.error(err, "error during sync iteration");
     }
