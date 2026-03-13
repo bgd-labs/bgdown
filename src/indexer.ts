@@ -21,7 +21,46 @@ try {
   if (env.PRIMARY) {
     await runMigrations(logger);
   } else {
-    logger.info("Skipping migrations on this node since it's not the primary");
+    logger.info("Waiting for PRIMARY node to complete migrations...");
+
+    const primaryUrl = `${env.PRIMARY_URL}/health`;
+    let healthy = false;
+
+    while (!healthy) {
+      try {
+        const res = await fetch(primaryUrl);
+        const health = (await res.json()) as {
+          status: string;
+          sourceCommit: string;
+        };
+
+        if (
+          health.status === "ok" &&
+          health.sourceCommit === env.SOURCE_COMMIT
+        ) {
+          logger.info("PRIMARY is ready and on same commit, proceeding");
+          healthy = true;
+        } else {
+          logger.warn(
+            {
+              status: health.status,
+              primaryCommit: health.sourceCommit,
+              localCommit: env.SOURCE_COMMIT,
+            },
+            "PRIMARY not ready or commit mismatch",
+          );
+        }
+      } catch (err) {
+        logger.warn(
+          { error: String(err) },
+          "Failed to reach PRIMARY health endpoint, retrying...",
+        );
+      }
+
+      if (!healthy) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
   }
 
   const hypersync = getHypersyncForChain(chain.id);

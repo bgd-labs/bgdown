@@ -48,6 +48,11 @@ spawnIndexer();
 
 const servers = await discoverServers();
 
+if (env.PRIMARY) {
+  const { runMigrations } = await import("./migrate.ts");
+  await runMigrations(indexerLogger);
+}
+
 new Elysia()
   .use(cors({ origin: /logs\.bgdlabs\.com$/ }))
   .use(
@@ -59,6 +64,10 @@ new Elysia()
   .onError(({ log, error, request }) => {
     log.error(`Error on ${request.method} ${request.url}: ${error}`);
   })
+  .get("/health", () => ({
+    status: "ok",
+    sourceCommit: env.SOURCE_COMMIT,
+  }))
   .use(
     openapi({
       documentation: {
