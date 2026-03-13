@@ -3,7 +3,7 @@ import { CHAIN_BY_ID } from "./chains.ts";
 import { clickhouse } from "./clickhouse.ts";
 import env from "./env.ts";
 import { getHypersyncForChain } from "./hypersync.ts";
-import { ensureSchema } from "./schema.ts";
+import { ensureMigrations } from "./migrate.ts";
 import { getChainState, runStream } from "./streamer.ts";
 import { batchQueue } from "./utils/batch-queue.ts";
 import { createDbWriter } from "./utils/sql.ts";
@@ -18,7 +18,7 @@ try {
     chainId: env.CHAIN_ID,
   });
 
-  await ensureSchema(logger);
+  await ensureMigrations(logger);
 
   const hypersync = getHypersyncForChain(chain.id);
 

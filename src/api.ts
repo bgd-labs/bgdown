@@ -29,12 +29,13 @@ function spawnIndexer() {
 }
 
 async function discoverServers() {
-  if (process.env.NODE_ENV !== "production") return [];
+  if (!env.PRIMARY) return [];
   const results = await Promise.allSettled(
     [...CHAIN_BY_ID.values()].map(async (chain) => {
       const url = `https://${chain.id}.logs.bgdlabs.com`;
       const r = await fetch(`${url}/spec.json`, {
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(1_000),
+        method: "HEAD",
       });
       if (!r.ok) throw new Error(`${r.status}`);
       return { url, description: chain.name };
@@ -47,6 +48,9 @@ spawnIndexer();
 
 const servers = await discoverServers();
 
+const { ensureMigrations } = await import("./migrate.ts");
+await ensureMigrations(indexerLogger);
+
 new Elysia()
   .use(cors({ origin: /logs\.bgdlabs\.com$/ }))
   .use(
@@ -58,6 +62,10 @@ new Elysia()
   .onError(({ log, error, request }) => {
     log.error(`Error on ${request.method} ${request.url}: ${error}`);
   })
+  .get("/health", () => ({
+    status: "ok",
+    sourceCommit: env.SOURCE_COMMIT,
+  }))
   .use(
     openapi({
       documentation: {

@@ -17,7 +17,28 @@ const migrations: Migration[] = [
   },
 ];
 
-export async function runMigrations(logger: pino.Logger): Promise<void> {
+export async function ensureMigrations(logger: pino.Logger): Promise<void> {
+  if (env.PRIMARY) {
+    logger.info(
+      { sourceCommit: env.SOURCE_COMMIT },
+      "PRIMARY node: running migrations",
+    );
+    await applyMigrations(logger);
+  } else {
+    logger.info(
+      { sourceCommit: env.SOURCE_COMMIT },
+      "SECONDARY node: waiting for PRIMARY to complete migrations",
+    );
+    await waitForPrimaryMigrations(logger);
+  }
+}
+
+async function applyMigrations(logger: pino.Logger): Promise<void> {
+  logger.info(
+    { totalMigrations: migrations.length },
+    "Starting migration check on PRIMARY node",
+  );
+
   // Connect to the `default` database first so we can create our target DB
   // without hitting a chicken-and-egg problem.
   const bootstrap = createClient({
@@ -49,12 +70,20 @@ export async function runMigrations(logger: pino.Logger): Promise<void> {
       (await result.json<{ name: string }>()).map((r) => r.name),
     );
 
+    logger.info(
+      {
+        alreadyApplied: applied.size,
+        remaining: migrations.length - applied.size,
+      },
+      "Migration status check",
+    );
+
     // 4. Apply pending migrations in order.
     let ran = 0;
     for (const migration of migrations) {
       if (applied.has(migration.name)) continue;
 
-      logger.info({ migration: migration.name }, "applying migration");
+      logger.info({ migration: migration.name }, "PRIMARY: applying migration");
       await migration.up(bootstrap);
       await bootstrap.insert({
         table: `migrations`,
@@ -62,15 +91,74 @@ export async function runMigrations(logger: pino.Logger): Promise<void> {
         format: "JSONEachRow",
       });
       ran++;
-      logger.info({ migration: migration.name }, "migration applied");
+      logger.info(
+        { migration: migration.name },
+        "PRIMARY: migration applied successfully",
+      );
     }
 
     if (ran === 0) {
-      logger.info("all migrations already applied");
+      logger.info("PRIMARY: all migrations already applied, no action needed");
     } else {
-      logger.info({ ran }, "migrations applied");
+      logger.info(
+        { appliedCount: ran, totalApplied: applied.size + ran },
+        "PRIMARY: migrations complete, ready to accept requests",
+      );
     }
   } finally {
     await bootstrap.close();
+  }
+}
+
+async function waitForPrimaryMigrations(logger: pino.Logger): Promise<void> {
+  logger.info(
+    { primaryUrl: env.PRIMARY_URL },
+    "Secondary node waiting for PRIMARY to complete migrations before proceeding",
+  );
+
+  const primaryUrl = new URL("/health", env.PRIMARY_URL).toString();
+  let healthy = false;
+  let attempts = 0;
+
+  while (!healthy) {
+    attempts++;
+    try {
+      const res = await fetch(primaryUrl);
+      const health = (await res.json()) as {
+        status: string;
+        sourceCommit: string;
+      };
+
+      if (health.status === "ok" && health.sourceCommit === env.SOURCE_COMMIT) {
+        logger.info(
+          { attempts, primaryCommit: health.sourceCommit },
+          "Secondary: PRIMARY is healthy and on same commit, proceeding with indexing",
+        );
+        healthy = true;
+      } else if (health.sourceCommit !== env.SOURCE_COMMIT) {
+        logger.warn(
+          {
+            attempts,
+            primaryCommit: health.sourceCommit,
+            secondaryCommit: env.SOURCE_COMMIT,
+          },
+          "Secondary: PRIMARY is healthy but on different commit, waiting for deployment match",
+        );
+      } else {
+        logger.warn(
+          { attempts, status: health.status },
+          "Secondary: PRIMARY migrations still in progress, retrying",
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        { attempts, error: String(err) },
+        "Secondary: failed to reach PRIMARY health endpoint, will retry",
+      );
+    }
+
+    if (!healthy) {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
   }
 }
