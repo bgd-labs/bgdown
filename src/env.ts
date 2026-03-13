@@ -14,8 +14,8 @@ const raw = arkenv({
       SUPPORTED_CHAIN_IDS.some((supportedId) => supportedId === id),
     )
     .pipe((id) => id as (typeof SUPPORTED_CHAIN_IDS)[number]),
-  PRIMARY_URL: "string.url = 'https://1.logs.bgdlabs.com'",
-  COOLIFY_URL: "string",
+  PRIMARY_URL: "string.url = 'http://localhost:3000'",
+  COOLIFY_URL: "string = 'http://localhost:3000'",
 });
 
 // Normalise the ClickHouse URL: fix scheme, remap native TCP port, then extract
