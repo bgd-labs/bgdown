@@ -38,4 +38,5 @@ export default {
   CLICKHOUSE_URL: parsedUrl.toString(),
   CLICKHOUSE_USERNAME,
   CLICKHOUSE_PASSWORD,
+  PRIMARY: raw.CHAIN_ID === 1,
 };

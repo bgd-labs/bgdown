@@ -29,12 +29,12 @@ function spawnIndexer() {
 }
 
 async function discoverServers() {
-  if (process.env.NODE_ENV !== "production") return [];
+  if (!env.PRIMARY) return [];
   const results = await Promise.allSettled(
     [...CHAIN_BY_ID.values()].map(async (chain) => {
       const url = `https://${chain.id}.logs.bgdlabs.com`;
       const r = await fetch(`${url}/spec.json`, {
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(1_000),
       });
       if (!r.ok) throw new Error(`${r.status}`);
       return { url, description: chain.name };
