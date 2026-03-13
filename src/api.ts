@@ -35,6 +35,7 @@ async function discoverServers() {
       const url = `https://${chain.id}.logs.bgdlabs.com`;
       const r = await fetch(`${url}/spec.json`, {
         signal: AbortSignal.timeout(1_000),
+        method: "HEAD",
       });
       if (!r.ok) throw new Error(`${r.status}`);
       return { url, description: chain.name };
