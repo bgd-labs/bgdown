@@ -48,10 +48,8 @@ spawnIndexer();
 
 const servers = await discoverServers();
 
-if (env.PRIMARY) {
-  const { runMigrations } = await import("./migrate.ts");
-  await runMigrations(indexerLogger);
-}
+const { ensureMigrations } = await import("./migrate.ts");
+await ensureMigrations(indexerLogger);
 
 new Elysia()
   .use(cors({ origin: /logs\.bgdlabs\.com$/ }))

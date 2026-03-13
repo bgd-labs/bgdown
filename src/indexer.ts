@@ -3,7 +3,7 @@ import { CHAIN_BY_ID } from "./chains.ts";
 import { clickhouse } from "./clickhouse.ts";
 import env from "./env.ts";
 import { getHypersyncForChain } from "./hypersync.ts";
-import { runMigrations } from "./migrate.ts";
+import { ensureMigrations } from "./migrate.ts";
 import { getChainState, runStream } from "./streamer.ts";
 import { batchQueue } from "./utils/batch-queue.ts";
 import { createDbWriter } from "./utils/sql.ts";
@@ -18,50 +18,7 @@ try {
     chainId: env.CHAIN_ID,
   });
 
-  if (env.PRIMARY) {
-    await runMigrations(logger);
-  } else {
-    logger.info("Waiting for PRIMARY node to complete migrations...");
-
-    const primaryUrl = `${env.PRIMARY_URL}/health`;
-    let healthy = false;
-
-    while (!healthy) {
-      try {
-        const res = await fetch(primaryUrl);
-        const health = (await res.json()) as {
-          status: string;
-          sourceCommit: string;
-        };
-
-        if (
-          health.status === "ok" &&
-          health.sourceCommit === env.SOURCE_COMMIT
-        ) {
-          logger.info("PRIMARY is ready and on same commit, proceeding");
-          healthy = true;
-        } else {
-          logger.warn(
-            {
-              status: health.status,
-              primaryCommit: health.sourceCommit,
-              localCommit: env.SOURCE_COMMIT,
-            },
-            "PRIMARY not ready or commit mismatch",
-          );
-        }
-      } catch (err) {
-        logger.warn(
-          { error: String(err) },
-          "Failed to reach PRIMARY health endpoint, retrying...",
-        );
-      }
-
-      if (!healthy) {
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-    }
-  }
+  await ensureMigrations(logger);
 
   const hypersync = getHypersyncForChain(chain.id);
 
