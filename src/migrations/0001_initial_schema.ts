@@ -21,6 +21,7 @@ export async function up(client: ClickHouseClient): Promise<void> {
         removed           UInt8
       ) ENGINE = ReplacingMergeTree()
       ORDER BY (chain_id, topic0, block_number, log_index, address)
+      PARTITION BY chain_id
       SETTINGS index_granularity = 8192
     `,
   });
