@@ -41,7 +41,5 @@ export default {
   CLICKHOUSE_URL: parsedClickhouseUrl.toString(),
   CLICKHOUSE_USERNAME,
   CLICKHOUSE_PASSWORD,
-  COOLIFY_URL: new URL(raw.COOLIFY_URL.split(",")[0]).toString(),
-  PRIMARY_URL: new URL(raw.PRIMARY_URL).toString(),
-  PRIMARY: raw.PRIMARY_URL === raw.COOLIFY_URL,
+  PRIMARY: raw.COOLIFY_URL.includes(raw.PRIMARY_URL),
 };
